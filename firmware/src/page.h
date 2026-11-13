@@ -7,7 +7,7 @@
 
 static const char PAGE[] PROGMEM = R"HTML(<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Panda Status</title>
+<title>Panda State</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%230b0e14'/%3E%3Crect x='6' y='23' width='52' height='18' rx='9' fill='%23171c26' stroke='%23ffffff' stroke-opacity='.14' stroke-width='1.5'/%3E%3Crect x='9' y='28' width='7.6' height='8' rx='2.5' fill='%23ff6a00'/%3E%3Crect x='18.6' y='28' width='7.6' height='8' rx='2.5' fill='%23ffd60a'/%3E%3Crect x='28.2' y='28' width='7.6' height='8' rx='2.5' fill='%2334c759'/%3E%3Crect x='37.8' y='28' width='7.6' height='8' rx='2.5' fill='%2300a8ff'/%3E%3Crect x='47.4' y='28' width='7.6' height='8' rx='2.5' fill='%23bf5af2'/%3E%3C/svg%3E">
 <style>
 :root{--bg:#07090e;--card:#0f131b;--line:rgba(255,255,255,.08);--text:#eef1f6;--t2:#aab2c0;--t3:#6f7888;--c:#009dff}
@@ -48,6 +48,7 @@ button:hover{background:rgba(255,255,255,.17)}button.go{background:var(--text);c
 .dot{flex:none;width:8px;height:8px;border-radius:50%;background:#64748b}.dot[data-live]{background:#22c55e;box-shadow:0 0 0 3px rgba(34,197,94,.18)}.dot[data-bad]{background:#f59e0b}
 .tag{margin-left:auto;flex:none;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:600;color:var(--t2);background:rgba(255,255,255,.07)}
 .empty{grid-column:1/-1;padding:16px;border-radius:18px;border:1px dashed var(--line);color:var(--t3);font-size:13px}
+.sig{display:inline-flex;align-items:flex-end;gap:2px;height:13px;margin-left:8px;vertical-align:-1px}.sig i{width:4px;border-radius:1px;background:rgba(255,255,255,.14)}.sig i:nth-child(1){height:4px}.sig i:nth-child(2){height:7px}.sig i:nth-child(3){height:10px}.sig i:nth-child(4){height:13px}
 .sw{display:grid;grid-template-columns:repeat(25,1fr);gap:2px;height:10px;margin:2px 0}.sw i{border-radius:2px;background:#222}
 .panel{margin-top:14px;padding:14px;border-radius:22px;background:rgba(0,0,0,.18);border:1px solid var(--line)}
 details.byo{margin-top:14px;border-top:1px solid var(--line);padding-top:12px}details.byo summary{cursor:pointer;color:var(--t2);font-size:13px}
@@ -70,15 +71,15 @@ details.card[open]>summary{margin-bottom:12px}
 </style></head><body><main>
 
 <section class="card" id="now">
-  <div class="head"><b>Panda Status</b><span class="chip" id="fw">…</span><span class="more" id="net"></span></div>
+  <div class="head"><b id="board">Panda Status</b><span class="chip" id="fw">…</span><span class="more"><span id="net"></span><span class="sig" id="sig" title="Wi-Fi signal"><i></i><i></i><i></i><i></i></span></span></div>
   <div class="big" id="state">…</div>
   <div class="sub" id="said"></div>
   <div class="bar" id="bar"></div>
   <div class="line"><label for="bri">Brightness</label><input class="grow" id="bri" type="range" min="0" max="100"><span class="sub" id="briv"></span></div>
-  <div class="line"><label>Mode</label><button id="mstatus">Follow the printer</button><button id="mmusic">Music</button>
+  <div class="line" id="moderow"><label>Mode</label><button id="mstatus">Follow the printer</button><button id="mmusic">Music</button>
     <label for="sens">Music sensitivity</label><select id="sens" style="width:110px"><option>low</option><option>medium</option><option>high</option><option>auto</option></select>
     <span class="sub" id="mic"></span></div>
-  <div class="sub" style="margin-top:10px">Button on the bar: press once for the next Music sensitivity, twice to switch mode, hold five seconds for the setup Wi-Fi network.</div>
+  <div class="sub" id="btnhelp" style="margin-top:10px">Button on the bar: press once for the next Music sensitivity, twice to switch mode, hold five seconds for the setup Wi-Fi network.</div>
 </section>
 
 <details class="card" id="fold-looks">
@@ -88,6 +89,8 @@ details.card[open]>summary{margin-bottom:12px}
     <label for="order">Colour order</label><select id="order" style="width:90px"></select>
     <label><input type="checkbox" id="rev"> Run the other way along the bar</label>
   </div>
+  <div class="line" id="striprow" hidden><label for="striplen">LEDs on the strip</label><input id="striplen" type="text" inputmode="numeric" style="width:70px"><button id="stripsave">Save</button><span class="sub">The 25-LED picture is stretched over however many there are.</span></div>
+  <div class="line" id="splitrow" hidden><label class="tog"><input type="checkbox" id="split"> Split the bar: channel 1 shows its first half, channel 2 its second (otherwise both show all of it)</label></div>
   <div class="msg" id="cfgmsg"></div>
 </details>
 
@@ -102,7 +105,7 @@ details.card[open]>summary{margin-bottom:12px}
     <div class="store" id="storelist"></div>
   </div>
   <details class="byo"><summary>Build your own</summary>
-    <div class="sub" style="margin-top:10px">An add-on <b>file</b> is a few lines of JSON the bar runs itself: a look, meters, an animation, or a live meter read from a web address. Upload one here, or add yours to the store's folder on GitHub (<a href="https://github.com/ImSammyTTV/panda-status-p2-firmware/tree/main/addons/store" target="_blank" rel="noopener">format and examples</a>).</div>
+    <div class="sub" style="margin-top:10px">An add-on <b>file</b> is a few lines of JSON the bar runs itself: a look, meters, an animation, or a live meter read from a web address. Upload one here, or add yours to the store's folder on GitHub (<a href="https://github.com/ImSammyTTV/Panda-State/tree/main/addons/store" target="_blank" rel="noopener">format and examples</a>).</div>
     <div class="sub" style="margin-top:10px">An add-on <b>program</b> runs anywhere on your network and posts to <code>/api/addon</code>, again and again. Every call is listed at <a href="/api">/api</a>. A meter at 63%:<br><code>curl -X POST http://<span id="myip"></span>/api/addon -H "content-type: application/json" -d '{"id":"demo","name":"Demo","meters":[{"value":63,"colour":"#D97757"}]}'</code></div>
   </details>
 </details>
@@ -117,10 +120,21 @@ details.card[open]>summary{margin-bottom:12px}
 <details class="card" id="fold-printer">
   <summary><h2>Printer</h2><span class="sum" id="prsum"></span><i class="chev"></i></summary>
   <div class="sub" id="prstate"></div>
-  <div class="line"><input class="grow" id="prip" type="text" placeholder="Printer address, e.g. 192.168.1.50" autocomplete="off"><input class="grow" id="prsn" type="text" placeholder="Serial number" autocomplete="off"><input class="grow" id="prcode" type="password" placeholder="Access code" autocomplete="off"></div>
-  <div class="line"><button class="go" id="pair">Pair</button><button id="unpair">Unpair</button><span class="sub">On the printer: Settings, then LAN Only or Network, shows the address and the access code.</span></div>
+  <div class="line"><label for="prtype">Printer</label><select id="prtype" style="width:220px"><option value="bambu">Bambu Lab</option><option value="klipper">Klipper (Moonraker)</option></select></div>
+  <div class="line" id="klrow" hidden><input class="grow" id="klhost" type="text" placeholder="Klipper address, e.g. 192.168.1.60 or mainsail.local" autocomplete="off"><input id="klport" type="text" inputmode="numeric" placeholder="7125" style="width:80px"><input class="grow" id="klkey" type="password" placeholder="Moonraker API key, if it asks for one" autocomplete="off"></div>
+  <div class="line" id="bbrow"><input class="grow" id="prip" type="text" placeholder="Printer address, e.g. 192.168.1.50" autocomplete="off"><input class="grow" id="prsn" type="text" placeholder="Serial number" autocomplete="off"><input class="grow" id="prcode" type="password" placeholder="Access code" autocomplete="off"></div>
+  <div class="line"><button class="go" id="pair">Pair</button><button id="unpair">Unpair</button><span class="sub" id="prhelp">On the printer: Settings, then LAN Only or Network, shows the address and the access code.</span></div>
   <div class="line"><label for="cmin">After a print, cooling for</label><input id="cmin" type="text" inputmode="numeric" style="width:64px"><label for="cbed">minutes and until the bed is at</label><input id="cbed" type="text" inputmode="numeric" style="width:64px"><label>&deg;C</label><button id="coolsave">Save</button></div>
   <div class="msg" id="prmsg"></div>
+</details>
+
+<details class="card" id="fold-ha">
+  <summary><h2>Home Assistant</h2><span class="sum" id="hasum"></span><i class="chev"></i></summary>
+  <div class="upd"><div class="grow"><b id="hatitle">…</b><div class="sub" id="hasub"></div></div><button id="haon"></button></div>
+  <div class="line"><input class="grow" id="hahost" type="text" placeholder="MQTT broker address, e.g. 192.168.1.10" autocomplete="off"><input id="haport" type="text" inputmode="numeric" placeholder="1883" style="width:80px"></div>
+  <div class="line"><input class="grow" id="hauser" type="text" placeholder="User name (if the broker has one)" autocomplete="off"><input class="grow" id="hapass" type="password" placeholder="Password (leave empty to keep)" autocomplete="new-password"><input id="haprefix" type="text" placeholder="homeassistant" style="width:150px" title="Discovery prefix"><button class="go" id="hasave">Save</button></div>
+  <div class="sub" style="margin-top:10px">With MQTT discovery the bar appears in Home Assistant by itself: a light (on, off, brightness, colour, effect; pick &ldquo;Follow the printer&rdquo; to hand it back), what it is showing, the print&rsquo;s progress and its Wi-Fi signal. An automation can also send <code>{"state":"printing","progress":42}</code> to <code id="hatopic"></code><code>/state/set</code>.</div>
+  <div class="msg" id="hamsg"></div>
 </details>
 
 <details class="card" id="fold-wifi">
@@ -174,7 +188,13 @@ function build(s){
   }
   for(const o of ['GRB','RGB','BRG','BGR','RBG','GBR']){const e=document.createElement('option');e.value=e.textContent=o;$('order').appendChild(e);}
   $('order').value=s.config.order; $('rev').checked=s.config.reversed; $('bri').value=s.config.brightness;
-  $('prip').value=s.printer.ip||''; $('prsn').value=s.printer.serial||''; $('cmin').value=s.config.cool.minutes; $('cbed').value=s.config.cool.target;
+  $('prtype').value=s.printer.type||'bambu'; showPrType();
+  if(s.printer.type==='klipper'){$('klhost').value=s.printer.ip||'';$('klport').value=s.printer.port||7125;}else{$('prip').value=s.printer.ip||''; $('prsn').value=s.printer.serial||'';}
+  const h=s.homeAssistant; haOn=h.on; paintHa(); $('hahost').value=h.host; $('haport').value=h.port; $('hauser').value=h.user; $('haprefix').value=h.prefix; $('hatopic').textContent=h.topic;
+  $('board').textContent=s.boardName||'Panda Status';
+  const p2=(s.board||'p2')==='p2'; $('moderow').hidden=!p2; $('btnhelp').textContent=p2?$('btnhelp').textContent:'Button on the board: hold five seconds for the setup Wi-Fi network.';
+  if(s.board==='status'){$('striprow').hidden=false;$('striplen').value=s.config.stripLength;}
+  if(s.board==='rgb'){$('splitrow').hidden=false;$('split').checked=s.config.split;} $('cmin').value=s.config.cool.minutes; $('cbed').value=s.config.cool.target;
   const sc=s.config.schedule; schedOn=sc.enabled; paintSched(); $('schfrom').value=sc.from; $('schto').value=sc.to; $('schlvl').value=sc.level;
   /* The zone list: the saved one first if it is not a listed zone, then the browser's own, then the table. */
   const add=(label,tz,zone,pick)=>{const o=document.createElement('option');o.textContent=label;o.value=tz;o.dataset.zone=zone;$('zone').appendChild(o);if(pick)o.selected=true;};
@@ -196,7 +216,7 @@ $('schon').onclick=()=>{schedOn=!schedOn;paintSched();saveSched();};
 async function saveSched(){busy=Date.now();const o=$('zone').selectedOptions[0];const r=await post('/api/config',{schedule:{enabled:schedOn,from:$('schfrom').value,to:$('schto').value,level:+$('schlvl').value},time:{tz:o.value,zone:o.dataset.zone}});$('schmsg').textContent=r.ok?'Saved':(r.message||'Not saved');}
 $('schsave').onclick=saveSched; $('zone').onchange=saveSched;
 /* The store is a folder on GitHub, read by this page (so it needs internet on the device showing the page, not on the bar). Using an add-on hands the bar its address; the bar fetches it from there each time it starts and keeps nothing else. */
-const STORE='https://raw.githubusercontent.com/ImSammyTTV/panda-status-p2-firmware/main/addons/store/';
+const STORE='https://raw.githubusercontent.com/ImSammyTTV/Panda-State/main/addons/store/';
 const esc=(t)=>String(t??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const ago=(n)=>n<60?n+' s':n<3600?Math.round(n/60)+' min':n<172800?Math.round(n/3600)+' h':Math.round(n/86400)+' days';
 let last=null;
@@ -234,7 +254,7 @@ async function openStore(){
   let idx;try{idx=await fetch(STORE+'index.json',{cache:'no-store'}).then(r=>{if(!r.ok)throw 0;return r.json();});}
   catch(e){$('storenote').textContent='Could not reach the store: it needs internet on this device';$('storelist').innerHTML='';return;}
   $('storenote').textContent=idx.addons.length+' from GitHub · one at a time';
-  window.storeIdx=idx; drawStore();
+  window.storeIdx=idx; loadSims(idx); drawStore();
 }
 /* Drawn again whenever the bar's add-on changes, so the card it came from says In use even when the store was read before the bar first answered. */
 function drawStore(){
@@ -242,10 +262,71 @@ function drawStore(){
   window.storeFor=last?last.addonFile.url:null;
   $('storelist').innerHTML=idx.addons.map(a=>{const url=STORE+a.file,using=last&&last.addonFile.url===url,cols=(a.preview||'').match(/[0-9a-fA-F]{6}/g)||[];
     return '<div class="tile"'+(using?' data-on':'')+'><div class="t"><span>'+esc(a.name)+'</span><em class="tag">'+esc(a.kind)+'</em></div>'
-      +(cols.length===25?'<div class="sw">'+cols.map(c=>'<i style="background:#'+c+'"></i>').join('')+'</div>':'')
+      +(cols.length===25?'<div class="sw" data-f="'+esc(a.file)+'">'+cols.map(c=>'<i style="background:#'+c+'"></i>').join('')+'</div>':'')
       +'<div class="d">'+esc(a.description)+'</div><div class="sub">'+(a.author?'by '+esc(a.author):'')+'</div>'
       +'<div class="acts">'+(using?'<button class="go" disabled>In use</button>':'<button data-url="'+esc(url)+'"'+(a.needs?' data-needs="'+esc(a.needs)+'"':'')+'>'+(a.needs==='place'?'Use for my town':'Use this')+'</button>')+'</div></div>';}).join('');
 }
+/* Store cards that move the way the bar would. Looks run through a copy of the bar's own effects (the same sums as render() and paintEffect() in the firmware), animations play their frames at their own speed, and live meters fill up to the level in their picture. */
+const SIMS={};
+const hex3=(c)=>{c=(c||'#000000').replace('#','');return [parseInt(c.substr(0,2),16)||0,parseInt(c.substr(2,2),16)||0,parseInt(c.substr(4,2),16)||0];};
+const hexRow=(h)=>((h||'').match(/[0-9a-fA-F]{6}/g)||[]).map(hex3);
+function partner(c){const [r,g,b]=c.map(x=>x/255),hi=Math.max(r,g,b),lo=Math.min(r,g,b),sp=hi-lo;if(sp<0.08)return [0x40,0x60,0xff];
+  let h=hi===r?((g-b)/sp)%6:hi===g?(b-r)/sp+2:(r-g)/sp+4;h=((h/6+1+1/6)%1)*6;
+  const s=sp/hi,v=hi,f=h-Math.floor(h),p=v*(1-s),q=v*(1-s*f),u=v*(1-s*(1-f));
+  return [[v,u,p],[q,v,p],[p,v,u],[p,q,v],[u,p,v],[v,p,q]][Math.floor(h)%6].map(x=>Math.floor(x*255));}
+function hue(h){const x=h*6,f=x-Math.floor(x),q=1-f;return [[1,f,0],[q,1,0],[0,1,f],[0,q,1],[f,0,1],[1,0,q]][Math.floor(x)%6].map(v=>v*255);}
+function lookSim(look){
+  const N=25,c1=hex3(look.colour),c2=look.colour2&&look.colour2!=='auto'?hex3(look.colour2):partner(c1),fx=look.effect||'solid',speed=look.speed||50;
+  const pal=[c1,c2],mix=(a,b,k)=>[0,1,2].map(i=>a[i]+(b[i]-a[i])*k),along=(x)=>{const f=(((x%1)+1)%1)*2,i=Math.floor(f);return mix(pal[i%2],pal[(i+1)%2],f-i);};
+  const heat=new Array(N).fill(0),glow=new Array(N).fill(0),tint=[...Array(N)].map(()=>[0,0,0]);let drops=[];
+  return (t,dt)=>{
+    const rate=0.1+speed/100*1.9,s=0.5+speed/100*7.5;let lamp=null;
+    if(fx==='fire'){const ticks=Math.max(1,Math.round(dt*30*Math.max(0.5,s/4)));
+      for(let n=0;n<ticks;n++){for(let i=0;i<N;i++)heat[i]=Math.max(0,heat[i]-Math.random()*((55*10/N+2)/255));for(let i=N-1;i>=2;i--)heat[i]=(heat[i-1]+heat[i-2]+heat[i-2])/3;if(Math.random()<0.65){const a=Math.floor(Math.random()*4);heat[a]=Math.min(1,heat[a]+0.6+Math.random()*0.4);}}
+      lamp=heat.map(h=>{const x=Math.min(1,Math.max(0,h))*3;return [[x<1?x*255:255,x<1?0:x<2?(x-1)*255:255,x<2?0:(x-2)*255],1];});}
+    else if(fx==='twinkle'){lamp=[];for(let i=0;i<N;i++){glow[i]=Math.max(0,glow[i]-dt*0.9*s/4);if(Math.random()<dt*s*0.5){glow[i]=1;tint[i]=along(Math.random());}lamp.push([tint[i],glow[i]]);}}
+    else if(fx==='sparkle'){lamp=[];for(let i=0;i<N;i++){glow[i]=Math.max(0,glow[i]-dt*6);if(Math.random()<dt*s*0.8)glow[i]=1;lamp.push([mix(c1,[255,255,255],glow[i]),0.55+0.45*glow[i]]);}}
+    else if(fx==='rain'){drops=drops.map(d=>d-dt*s*5).filter(d=>d>=-4);if(drops.length<8&&Math.random()<dt*s*0.9)drops.push(N-1);
+      const lv=new Array(N).fill(0);for(const d of drops)for(let j=0;j<4;j++){const i=Math.round(d+j);if(i>=0&&i<N)lv[i]=Math.max(lv[i],1-j/4);}lamp=lv.map(l=>[c1,l]);}
+    const out=[];
+    for(let i=0;i<N;i++){let col=c1,v=1;
+      switch(fx){
+        case 'breathe':v=0.10+0.90*(0.5-0.5*Math.cos(2*Math.PI*t*rate*0.5));break;
+        case 'flash':v=((t*rate*2)%1)<0.5?1:0.15;break;
+        case 'chase':{const head=(t*rate*N*0.5)%N,behind=(head-i+N)%N;v=Math.max(0.2,behind<6?1-behind/6:0.2);break;}
+        case 'rainbow':col=hue((i/N+t*rate*0.2)%1);break;
+        case 'gradient':col=mix(c1,c2,i/(N-1));break;
+        case 'waves':col=along(i/N+t*0.05*s+0.12*Math.sin(t*0.6*s+i/3));v=0.55+0.45*Math.sin(i/2.5-t*0.9*s);break;
+        case 'scroll':col=along(i/N+t*0.07*s);break;
+        case 'theatre':{const on=(i+Math.floor(t*s*3))%3===0;col=on?c1:c2;v=on?1:0.25;break;}
+        case 'scanner':{const pos=(N-1)*(0.5-0.5*Math.cos(t*s*1.5)),m=Math.min(1,Math.max(0,1-Math.abs(i-pos)/3));col=mix(c2,c1,m);v=0.25+0.75*m;break;}
+        case 'meteor':{const pos=(t*s*2.6)%(N+14),b=pos-i,g=b<0?Math.exp(-(b*b)/2.2):Math.exp(-b/4.5);col=along(1-i/N*0.6);v=Math.sqrt(Math.min(1,Math.max(0,g)));break;}
+        case 'aurora':{const w=Math.min(1,Math.max(0,0.5+0.5*Math.sin(i*0.35+t*s*0.35)*Math.sin(i*0.17-t*s*0.25+1.7)+0.15));col=along(0.5*w+i/N*0.3+t*0.02*s);v=0.5+0.5*w;break;}
+        default:if(lamp){col=lamp[i][0];v=lamp[i][1];}
+      }
+      const k=v*v;out.push([col[0]*k,col[1]*k,col[2]*k]);}
+    return out;};
+}
+function storeSim(file,entry){
+  if(file.look)return lookSim(file.look);
+  if(file.frames&&file.frames.list&&file.frames.list.length){const rows=file.frames.list.map(hexRow),fps=file.frames.fps||4;return (t)=>rows[Math.floor(t*fps)%rows.length];}
+  const pic=hexRow(entry.preview);if(pic.length!==25)return null;
+  if(!file.source)return ()=>pic;
+  /* A live meter: rise to the level in the picture, hold, start again. Lit is anything brighter than the picture's unlit grey. */
+  const lit=pic.filter(c=>c[0]+c[1]+c[2]>90).length,dark=[17,20,24];
+  return (t)=>{const p=Math.min(1,(t%4)/1.4),n=lit*(1-Math.pow(1-p,3));return pic.map((c,i)=>i<Math.floor(n)?c:i<n?c.map((x,j)=>dark[j]+(x-dark[j])*(n-i)):dark);};
+}
+function loadSims(idx){for(const a of idx.addons){if(SIMS[a.file]!==undefined)continue;SIMS[a.file]=null;
+  fetch(STORE+a.file,{cache:'no-store'}).then(r=>r.json()).then(j=>{SIMS[a.file]=storeSim(j,a);}).catch(()=>{});}}
+let simLast=0;
+function simTick(now){
+  requestAnimationFrame(simTick);
+  if(document.hidden||!$('fold-addons').open||now-simLast<33)return;
+  const dt=simLast?Math.min(0.1,(now-simLast)/1000):0.033;simLast=now;
+  document.querySelectorAll('#storelist .sw[data-f]').forEach(sw=>{const sim=SIMS[sw.dataset.f];if(!sim)return;const px=sim(now/1000,dt);if(!px)return;
+    [...sw.children].forEach((el,i)=>{const c=px[i];el.style.background='rgb('+Math.round(c[0])+','+Math.round(c[1])+','+Math.round(c[2])+')';});});
+}
+requestAnimationFrame(simTick);
 openStore();
 $('storelist').onclick=async(e)=>{const b=e.target.closest('button');if(!b||!b.dataset.url)return;
   /* An add-on for a place (weather, air): this page asks for the town, finds it with Open-Meteo's free place search, and hands the bar a copy with the place filled in. Only the coordinates go to the bar; nothing is looked up from the bar's own address. */
@@ -310,8 +391,18 @@ $('mstatus').onclick=()=>{busy=Date.now();post('/api/config',{mode:'status'});};
 $('mmusic').onclick=()=>{busy=Date.now();post('/api/config',{mode:'music'});};
 $('sens').onchange=()=>{busy=Date.now();post('/api/config',{music:{sensitivity:$('sens').value}});};
 $('factory').onclick=async()=>{if(!confirm('Clear every setting this firmware has saved (looks, mode, pairing, Wi-Fi) and restart?'))return;const r=await post('/api/factory');$('fwmsg').textContent=r.message||'';};
-$('pair').onclick=async()=>{const r=await post('/api/printer',{ip:$('prip').value,serial:$('prsn').value,code:$('prcode').value});$('prmsg').textContent=r.message||(r.ok?'Saved':'Not saved');if(r.ok)$('prcode').value='';};
-$('unpair').onclick=async()=>{if(!confirm('Unpair the bar from the printer?'))return;const r=await post('/api/printer',{forget:true});$('prmsg').textContent=r.message||'';if(r.ok){$('prip').value='';$('prsn').value='';}};
+function showPrType(){const k=$('prtype').value==='klipper';$('klrow').hidden=!k;$('bbrow').hidden=k;$('prhelp').textContent=k?'The address of the machine running Moonraker (Mainsail or Fluidd use the same one). Port 7125 unless you changed it.':'On the printer: Settings, then LAN Only or Network, shows the address and the access code.';}
+$('prtype').onchange=showPrType;
+let haOn=false;
+function paintHa(){$('haon').textContent=haOn?'On':'Off';$('haon').className=haOn?'go':'';}
+async function saveHa(){busy=Date.now();const body={on:haOn,host:$('hahost').value.trim(),port:+($('haport').value||1883),user:$('hauser').value.trim(),prefix:$('haprefix').value.trim()||'homeassistant'};if($('hapass').value)body.password=$('hapass').value;
+  const r=await post('/api/ha',body);$('hamsg').textContent=r.message||(r.ok?'Saved':'Not saved');if(r.ok)$('hapass').value='';else{haOn=last&&last.homeAssistant?last.homeAssistant.on:false;paintHa();}}
+$('haon').onclick=()=>{haOn=!haOn;paintHa();saveHa();};
+$('hasave').onclick=saveHa;
+$('stripsave').onclick=async()=>{busy=Date.now();const r=await post('/api/config',{stripLength:+$('striplen').value});$('cfgmsg').textContent=r.ok?'Saved':(r.message||'Not saved');};
+$('split').onchange=()=>{busy=Date.now();post('/api/config',{split:$('split').checked});};
+$('pair').onclick=async()=>{const k=$('prtype').value==='klipper';const r=await post('/api/printer',k?{type:'klipper',host:$('klhost').value,port:+($('klport').value||7125),key:$('klkey').value}:{ip:$('prip').value,serial:$('prsn').value,code:$('prcode').value});if(r.ok)$('klkey').value='';$('prmsg').textContent=r.message||(r.ok?'Saved':'Not saved');if(r.ok)$('prcode').value='';};
+$('unpair').onclick=async()=>{if(!confirm('Unpair the bar from the printer?'))return;const r=await post('/api/printer',{forget:true});$('prmsg').textContent=r.message||'';if(r.ok){$('prip').value='';$('prsn').value='';$('klhost').value='';}};
 $('coolsave').onclick=async()=>{const r=await post('/api/config',{cool:{minutes:+$('cmin').value,target:+$('cbed').value}});$('prmsg').textContent=r.ok?'Saved':(r.message||'Not saved');};
 $('order').onchange=()=>post('/api/config',{order:$('order').value});
 $('rev').onchange=()=>post('/api/config',{reversed:$('rev').checked});
@@ -336,6 +427,9 @@ async function tick(){
   /* Capitalised for show only: other programs recognise the firmware by its lower-case name in /api/status. */
   $('fw').textContent='v'+s.version;
   $('net').textContent=(s.setupNetwork?'setup network up · ':'')+s.ip+(s.rssi?' · '+s.rssi+' dBm':'');
+  /* Four bars like a phone's, coloured by how usable the link is: -60 dBm and better is solid, below -80 the page and updates start to struggle. */
+  const r=s.rssi||-200,bars=r>=-60?4:r>=-70?3:r>=-80?2:r>-200?1:0,col=bars===4?'#22c55e':bars===3?'#eab308':bars===2?'#f97316':'#ef4444';
+  [...$('sig').children].forEach((el,i)=>{el.style.background=i<bars?col:'';}); $('sig').hidden=!s.rssi;
   $('state').textContent=s.state;
   const look=s.config.states[s.state]; document.documentElement.style.setProperty('--c',look?look.colour:'#64748b');
   const pct=(s.state==='printing'||s.state==='cooling'||s.state==='paused')?' · '+Math.round(s.progress)+'%':'';
@@ -345,6 +439,8 @@ async function tick(){
   $('mic').textContent=s.mic.blocked?'microphone left off: its last start on this build did not finish':!s.mic.running?'microphone starting':!s.mic.found?'the microphone chip did not answer':'microphone '+Math.round(s.mic.db)+' dB · meter '+Math.round(s.mic.level*100)+'%';
   if(music&&s.source!=='preview') $('state').textContent='music';
   $('said').textContent=music&&s.source!=='preview'?'Music mode: the bar follows the sound in the room'
+    :s.lightOff?'Switched off from Home Assistant'
+    :s.source==='homeassistant'?'Set from Home Assistant; pick &ldquo;Follow the printer&rdquo; there to hand it back'.replace(/&ldquo;|&rdquo;/g,'"')
     :s.source==='preview'?'Trying a look for a few seconds'
     :s.source==='controller'?'Told by a controller '+s.linkAge+' s ago'+pct
     :s.source==='printer'?'From the printer itself'+pct
@@ -355,8 +451,9 @@ async function tick(){
   if(Date.now()-busy>3000) $('adwhen').value=s.config.addon.when;
   if(s.addonShowing){const a=s.addons.find(x=>x.id===s.addonShowing);$('state').textContent=a?a.name:s.addonShowing;$('said').textContent='An add-on has the bar';}
   const p=s.printer;
+  const pk=p.type==='klipper'?'Klipper at ':'';
   $('prstate').textContent=!p.paired?'Not paired.'
-    :p.connected?'Linked to '+p.ip+(p.gcode?' · printer says '+p.gcode+(p.percent!==undefined?' '+p.percent+'%':'')+(p.bed!==undefined?' · bed '+Math.round(p.bed)+'°':''):' · waiting for its first message')
+    :p.connected?'Linked to '+pk+p.ip+(p.gcode?' · printer says '+p.gcode+(p.percent!==undefined?' '+p.percent+'%':'')+(p.bed!==undefined?' · bed '+Math.round(p.bed)+'°':''):' · waiting for its first message')
     :'Paired with '+p.ip+', not linked'+(p.error?': '+p.error:'')+'.';
   if(Date.now()-busy>3000){$('bri').value=s.config.brightness;} $('briv').textContent=$('bri').value+'%';
   const o=s.otherSlot;
@@ -369,6 +466,11 @@ async function tick(){
   $('prsum').textContent=$('prstate').textContent;
   $('wifisum').textContent=$('wifititle').textContent+(s.ap.up?' · hotspot on':'');
   $('fwsum').textContent=$('updtitle').textContent;
+  const h=s.homeAssistant;
+  $('hatitle').textContent=!h.on?'Off':h.connected?'Connected to '+h.host:'Not connected'+(h.error?': '+h.error:'');
+  $('hasub').textContent=h.on?(h.connected?'Discovery prefix '+h.prefix+' · device topics under '+h.topic+(h.manual?' · Home Assistant has the light':''):'Broker '+h.host+':'+h.port):'Turn on, give the broker address (and user and password if it has them), and the bar appears under MQTT devices.';
+  $('hasum').textContent=$('hatitle').textContent;
+  if(Date.now()-busy>3000&&haOn!==h.on){haOn=h.on;paintHa();}
 }
 /* Which sections are open, remembered by this browser. */
 document.querySelectorAll('details.card').forEach(d=>{

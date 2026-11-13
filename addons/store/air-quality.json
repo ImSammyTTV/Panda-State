@@ -2,7 +2,7 @@
     "id":  "air",
     "name":  "Air quality in {place}",
     "description":  "The European air quality index outside: under 20 is good, 50 is poor, full (100) is extremely poor. Worth a look before opening the windows to air out the printer. Updated every 30 minutes. Air quality data by Open-Meteo.com (CC BY 4.0).",
-    "author":  "panda-status-p2-firmware",
+    "author":  "Panda State",
     "source":  {
                    "url":  "https://air-quality-api.open-meteo.com/v1/air-quality?latitude={lat}\u0026longitude={lon}\u0026current=european_aqi",
                    "path":  "current.european_aqi",

@@ -2,7 +2,7 @@
     "id":  "rainbow",
     "name":  "Rainbow",
     "description":  "Every colour, rolling end to end.",
-    "author":  "panda-status-p2-firmware",
+    "author":  "Panda State",
     "look":  {
                  "colour":  "#FF0000",
                  "effect":  "rainbow",

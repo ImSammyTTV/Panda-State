@@ -2,7 +2,7 @@
     "id":  "uv",
     "name":  "UV index in {place}",
     "description":  "The UV index now, from 0 to 11+ (full is extreme). Past half way is time for sunscreen. Updated every 15 minutes. Weather data by Open-Meteo.com (CC BY 4.0).",
-    "author":  "panda-status-p2-firmware",
+    "author":  "Panda State",
     "source":  {
                    "url":  "https://api.open-meteo.com/v1/forecast?latitude={lat}\u0026longitude={lon}\u0026current=uv_index",
                    "path":  "current.uv_index",

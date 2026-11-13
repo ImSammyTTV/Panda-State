@@ -1,34 +1,40 @@
 <p align="center">
-  <img src="assets/banner.svg" alt="Panda Status P2: open custom firmware for the BIQU light bar on Bambu Lab P2S and X2D" width="100%">
+  <img src="assets/banner.svg" alt="Panda State: open firmware for BIQU's Panda light boards" width="100%">
 </p>
 
 <p align="center">
-  <a href="https://github.com/ImSammyTTV/panda-status-p2-firmware/releases/latest"><img src="https://img.shields.io/github/v/release/ImSammyTTV/panda-status-p2-firmware?style=for-the-badge&color=ff7a3d&label=Download" alt="Latest release"></a>
-  <a href="https://github.com/ImSammyTTV/panda-status-p2-firmware/releases"><img src="https://img.shields.io/github/downloads/ImSammyTTV/panda-status-p2-firmware/total?style=for-the-badge&color=f5b400&label=Downloads" alt="Downloads"></a>
-  <img src="https://img.shields.io/badge/Panda%20Status%20P2-ESP32--C3-2f2f35?style=for-the-badge" alt="Panda Status P2, ESP32-C3">
+  <a href="https://github.com/ImSammyTTV/Panda-State/releases/latest"><img src="https://img.shields.io/github/v/release/ImSammyTTV/Panda-State?style=for-the-badge&color=ff7a3d&label=Download" alt="Latest release"></a>
+  <a href="https://github.com/ImSammyTTV/Panda-State/releases"><img src="https://img.shields.io/github/downloads/ImSammyTTV/Panda-State/total?style=for-the-badge&color=f5b400&label=Downloads" alt="Downloads"></a>
+  <img src="https://img.shields.io/badge/P2%20%C2%B7%20Status%20%C2%B7%20Lux%20%C2%B7%20RGB-ESP32--C3-2f2f35?style=for-the-badge" alt="Panda Status P2, Panda Status, Panda Lux RGB, Panda RGB Controller; ESP32-C3">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-00c46a?style=for-the-badge" alt="MIT license"></a>
   <a href="https://ko-fi.com/imsammyttv"><img src="https://img.shields.io/badge/Buy_me_a-drink-ff5e5b?style=for-the-badge&logo=kofi&logoColor=white" alt="Buy me a drink on Ko-fi"></a>
 </p>
 
-# Custom firmware for the BIQU Panda Status P2
+# Panda State
 
-An open replacement firmware for the **BIQU Panda Status P2**, the 25-LED
-light bar for Bambu Lab **P2S** and **X2D** printers. It does what stock does,
-then adds a real cool-down, seventeen effects, add-ons, updates from GitHub
-and an open API.
+Open replacement firmware for BIQU's Panda light boards, written for the
+**Panda Status P2**, the 25-LED light bar for Bambu Lab **P2S** and **X2D**
+printers. It does what stock does, then adds a real cool-down, seventeen
+effects, add-ons, Home Assistant, Klipper, updates from GitHub and an open
+API.
 
 <p align="center"><sub>Free and open. If it makes your printer nicer to live with, a drink on <a href="https://ko-fi.com/imsammyttv">Ko-fi</a> helps fund the next feature.</sub></p>
 
 > [!WARNING]
 > **Unofficial**, and not made or supported by BIQU, BigTreeTech or Bambu Lab.
-> For the **Panda Status P2 only**: not tested on the original Panda Status or
-> anything else. **Use at your own risk** (see the [disclaimer](#disclaimer)).
+> Made and tested on the **Panda Status P2**. The builds for the original Panda
+> Status, the Panda Lux RGB and the Panda RGB Controller use pins read out of
+> BIQU's own firmware for those boards, but **have not been run on that
+> hardware yet** (see [Which boards](#which-boards)). **Use at your own risk**
+> (see the [disclaimer](#disclaimer)).
 
 <p align="center"><img src="docs/live-leds.png" alt="The bar's own web page, its live picture of the 25 LEDs running the rainbow effect" width="640"></p>
 
 ## Highlights
 
 - 🔗 **Pairs with the printer by itself**, and keeps stock's Wi-Fi and pairing: nothing to retype.
+- 🖨️ **Bambu Lab or Klipper**: follows a Bambu printer over its LAN link, or any Klipper printer through Moonraker.
+- 🏠 **Home Assistant** over MQTT: the bar appears by itself as a light with sensors, ready for automations.
 - 🌡️ **A real cool-down** after a print: the bar drains as the bed cools, then says *Ready*.
 - 🎨 **Every state restyled**: eight states, each with two colours, one of 17 effects and a speed.
 - 🧩 **Add-ons and a store**: weather, rain, UV and air quality for your town, prices, looks, animations.
@@ -39,11 +45,48 @@ and an open API.
 ## Quick start
 
 1. Find the bar's address (the stock app or your router shows it).
-2. Download `panda-p2-custom-<version>.bin` from the [latest release](https://github.com/ImSammyTTV/panda-status-p2-firmware/releases/latest).
+2. Download the file for your board from the [latest release](https://github.com/ImSammyTTV/Panda-State/releases/latest): `panda-p2-custom-<version>.bin` for the Panda Status P2 (the others are in [Which boards](#which-boards)).
 3. Open `http://<bar address>/`, find the firmware update section, and upload the file.
 
 The bar restarts into it in a few seconds, on the same Wi-Fi and still paired.
 From then on it updates itself: **Firmware → Check for updates → Install**.
+
+## Which boards
+
+All four are ESP32-C3 boards from BIQU. Each has its own image, because the
+pins differ and the wrong pins on the wrong board is not something to guess at
+start-up. The updater on the bar fetches the right one for itself.
+
+| Board | File | LEDs | Status |
+|---|---|---|---|
+| **Panda Status P2** | `panda-p2-custom-<v>.bin` | 25 on GPIO 5, microphone, button | ✅ Made and tested on it |
+| **Panda Status** (original) | `panda-status-custom-<v>.bin` | WS2812 strip on GPIO 5, length set on the page | 🧪 Not yet run on one |
+| **Panda Lux RGB** (PX and PX2) | `panda-lux-custom-<v>.bin` | WS2812 strip on GPIO 5, length set on the page | 🧪 Not yet run on one |
+| **Panda RGB Controller** | `panda-rgb-custom-<v>.bin` | Two 12 V RGB channels on PWM (GPIO 10/1/4 and 6/0/5) | 🧪 Not yet run on one |
+
+The pins for the three untested boards were read out of BIQU's own firmware
+for each (the LED channel set-up in the original Panda Status V1.0.3, the Lux
+RGB V1.0.0 and the RGB Controller V1.0.2), not guessed. What has not happened
+yet is anyone running these builds on that hardware. If you do, an issue saying
+how it went is very welcome. On those boards:
+
+- **Music mode** is P2-only: it needs the P2's ES8311 microphone.
+- **The button** only does the 5-second hold for the hotspot.
+- **The original Panda Status and the Lux** show the 25-LED picture stretched
+  over however many LEDs the strip has (*What each state looks like → LEDs on
+  the strip*).
+- **The RGB Controller** shows the bar's average colour on both channels, or
+  with *Split the bar* the first half on channel 1 and the second on channel 2.
+- **The Lux's white LEDs** are not driven yet: its RGB strip is found, its
+  white channel is not.
+- They install the same way, through stock's updater. Stock stays in the
+  other slot only if those boards use the same two-slot layout as the P2, which
+  is likely (same BIQU firmware family) but not checked.
+
+**Not supported: the Panda Vent.** Its board is a different chip (the original
+ESP32, not a C3) and its main job is a motor, whose driver and end-stop
+sensing would have to be worked out from its firmware before anything could
+safely move it.
 
 ---
 
@@ -100,10 +143,22 @@ Wi-Fi with its hotspot fallback, and updates straight from GitHub:
   network so you can fix its settings; it goes again once Wi-Fi is back. It can
   also stay on, with your own name and password, and the page can scan for
   networks.
+- **Klipper as well as Bambu Lab.** Choose *Klipper (Moonraker)* in the
+  Printer section and give its address: the bar asks Moonraker every two
+  seconds for the job state, progress and bed temperature, and the same
+  cool-down applies. A Moonraker API key is optional, for installs that ask
+  for one.
+- **Home Assistant.** Give it your MQTT broker (the Mosquitto add-on, usually)
+  and the bar appears under MQTT devices with no YAML: a light (on, off,
+  brightness, colour and effect; *Follow the printer* hands it back), sensors
+  for what it is showing, the print's progress and its Wi-Fi signal, and on the
+  P2 a Mode select. Automations can also publish `{"state":"printing",
+  "progress":42}` to `panda/<id>/state/set`.
 - **A controller can drive it.** A home-automation system or script can post
   the printer's state; the bar follows it while it keeps posting.
-- **Its own web page**, with a live picture of the 25 LEDs. Works on a phone,
-  needs no internet.
+- **Its own web page**, with a live picture of the 25 LEDs and a Wi-Fi signal
+  meter. Works on a phone, needs no internet. The store's cards play each
+  add-on as the bar would, from a copy of the bar's own effects.
 
 **The button on the bar:** press once for the next Music sensitivity, twice to
 switch between Music and following the printer, hold five seconds to start the
@@ -190,7 +245,7 @@ as above.
 - **Microphone guard.** If starting the microphone ever brings the chip down,
   the next start leaves it off, so the bar stays reachable.
 - **Hotspot.** After a minute without Wi-Fi (or a 5 s button hold) the bar
-  starts `PandaP2-Setup`, password `panda` + the last six hex digits of its MAC
+  starts `PandaP2-Setup` (`PandaState-Setup` on the other boards), password `panda` + the last six hex digits of its MAC
   (the page shows it). Join it and open `http://192.168.4.1/`. It cannot be
   switched off for good.
 - **Updates are checked.** Downloads must match the release's SHA256 checksum,
@@ -238,9 +293,11 @@ use it). `GET /api` returns this list.
 | `POST /api/state` | `{"state":"printing","progress":42}` | A controller saying what the printer is doing; repeat at least every 45 s |
 | `POST /api/addon` | see below | A program saying what it wants shown |
 | `POST /api/addonfile` | `{"url":"https://…"}`, `{"file":{…}}`, `{"remove":true}` | An add-on the bar runs itself ([format](addons/store/README.md)) |
-| `POST /api/config` | any subset of the settings | `brightness`, `mode`, `music.sensitivity`, `states.<state>.{colour,colour2,effect,speed}`, `cool.{minutes,target}`, `schedule.{…}`, `time.{tz,zone}`, `addon.{show,when}`, `order`, `reversed` |
+| `POST /api/config` | any subset of the settings | `brightness`, `mode`, `music.sensitivity`, `states.<state>.{colour,colour2,effect,speed}`, `cool.{minutes,target}`, `schedule.{…}`, `time.{tz,zone}`, `addon.{show,when}`, `order`, `reversed`; `stripLength` (original Panda Status and Lux), `split` (RGB Controller) |
 | `POST /api/preview` | `{"state":"cooling","progress":60,"seconds":8}` | Show a look for a few seconds |
-| `POST /api/printer` | `{"ip":"…","serial":"…","code":"…"}` | Pair; `{"forget":true}` unpairs. The code is never sent back out |
+| `POST /api/printer` | `{"ip":"…","serial":"…","code":"…"}` | Pair with a Bambu printer; `{"forget":true}` unpairs. The code is never sent back out |
+| `POST /api/printer` | `{"type":"klipper","host":"…","port":7125,"key":"…"}` | Follow a Klipper printer through Moonraker instead; the key is optional and never sent back |
+| `POST /api/ha` | `{"on":true,"host":"…","port":1883,"user":"…","password":"…","prefix":"homeassistant"}` | Home Assistant over MQTT; anything left out is kept, the password is never sent back |
 | `POST /api/update` | `{"check":true}`, `{"install":true}`, `{"auto":true}` | Updates from GitHub |
 | `POST /api/wifi` | `{"ssid":"…","password":"…"}` | Save Wi-Fi and restart |
 | `GET /api/wifi/scan` | | Networks in range |
@@ -296,7 +353,10 @@ PlatformIO, Arduino framework for ESP32-C3 (`espressif32@6.9.0`):
 
 ```sh
 cd firmware
-pio run            # result: .pio/build/panda/firmware.bin
+pio run              # Panda Status P2: .pio/build/panda/firmware.bin
+pio run -e status    # original Panda Status
+pio run -e lux       # Panda Lux RGB (PX, PX2)
+pio run -e rgb       # Panda RGB Controller
 ```
 
 `firmware/partitions.csv` is the stock table, unchanged, so stock and custom can
@@ -315,8 +375,9 @@ prints or other consequence of using, installing or being unable to use this
 firmware or the stock image included with it. You alone decide whether to use
 it.
 
-BIQU, BigTreeTech, Panda Status, Bambu Lab, P2S and X2D are trademarks of their
-owners, used here only to say which hardware this is for.
+BIQU, BigTreeTech, Panda Status, Panda Lux, Panda Vent, Bambu Lab, P2S, X2D,
+Klipper and Home Assistant are trademarks of their owners, used here only to
+say which hardware and software this works with.
 
 ## Licence
 

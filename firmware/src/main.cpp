@@ -1,6 +1,8 @@
 /**
- * Custom firmware for the BIQU Panda Status P2, the light bar for Bambu Lab
- * P2S and X2D printers.
+ * Panda State: open firmware for BIQU's ESP32-C3 light boards. Written for the
+ * Panda Status P2, the light bar for Bambu Lab P2S and X2D printers, and built
+ * also for the original Panda Status, the Panda Lux RGB and the Panda RGB
+ * Controller (see BOARD_ below).
  *
  * The stock firmware talks to the printer itself and can show three things:
  * idle, printing, error. It has no idea the plate is still hot after a print,
@@ -39,20 +41,61 @@
 #include <HTTPClient.h>
 #include <memory>
 #include <mbedtls/sha256.h>
+#include <PubSubClient.h>
 #include "page.h"
 #include "roots.h"
 
 /* What the firmware calls itself on its page and in /api/status. Plain and generic, so it says what it is on anyone's network. */
 #define FW_NAME "panda"
-#define FW_VERSION "0.6.6"
+#define FW_VERSION "0.7.0"
 /* Where new releases and the add-on store live. A release must carry a
-   panda-p2-custom-<version>.bin and a SHA256SUMS.txt that lists it. */
-#define UPDATE_REPO "ImSammyTTV/panda-status-p2-firmware"
+   panda-<board>-custom-<version>.bin for each board and a SHA256SUMS.txt that lists them. */
+#define UPDATE_REPO "ImSammyTTV/Panda-State"
+
+/* One source, three BIQU boards, all ESP32-C3. Each gets its own image
+   (pio run -e panda | status | rgb) because the wrong pins on the wrong board
+   is not something to decide at run time: on the RGB Controller, the P2's
+   microphone clock pins are its PWM outputs. Pins for the original Panda
+   Status and the RGB Controller were read out of BTT's own V1.0.3 and V1.0.2
+   images (the RMT channel table and the LEDC channel set-up), not guessed. */
+#if defined(BOARD_RGB)
+#define BOARD_ID "rgb"
+#define BOARD_NAME "Panda RGB Controller"
+#elif defined(BOARD_LUX)
+/* The Panda Lux RGB (PX and PX2): BTT's own image drives a WS2812 strip on GPIO 5 exactly as the original Panda Status does, so it is that board under its own name. */
+#define BOARD_STATUS 1
+#define BOARD_ID "lux"
+#define BOARD_NAME "Panda Lux RGB"
+#elif defined(BOARD_STATUS)
+#define BOARD_ID "status"
+#define BOARD_NAME "Panda Status"
+#else
+#define BOARD_P2 1
+#define BOARD_ID "p2"
+#define BOARD_NAME "Panda Status P2"
+#endif
+/* The P2 keeps the hotspot name it has always had, so its owners find it where the README says. */
+#if defined(BOARD_P2)
+#define AP_DEFAULT_SSID "PandaP2-Setup"
+#else
+#define AP_DEFAULT_SSID "PandaState-Setup"
+#endif
 static const char *BUILD_ID = FW_VERSION " " __DATE__ " " __TIME__;
 
-/* Measured, not assumed: see HARDWARE.md. */
+/* Measured, not assumed: see HARDWARE.md. GPIO 5 is the strip on both the P2 and the original Panda Status. */
 static const uint8_t LED_PIN = 5;
+/* The bar everything is drawn on: 25 LEDs, the P2's own. Other boards show the same 25-LED picture, stretched over their strip or averaged onto their PWM channels. */
 static const uint8_t LED_COUNT = 25;
+#if defined(BOARD_STATUS)
+/* The original Panda Status drives whatever WS2812 strip is plugged in, so its length is a setting. */
+static const uint16_t STRIP_MAX = 300;
+static uint16_t stripLength = 25;
+#elif defined(BOARD_RGB)
+/* Two 12 V RGB channels on PWM, R, G, B each. Stock also drives GPIO 7 and 8 high at start-up and leaves them there; done the same here. */
+static const uint8_t RGB_PINS[2][3] = {{10, 1, 4}, {6, 0, 5}};
+static const uint8_t RGB_ENABLE_PINS[2] = {7, 8};
+static bool rgbSplit = false;   // false: both channels show the whole bar; true: channel 1 the first half, channel 2 the second
+#endif
 /* The ES8311 audio chip (the microphone) and the button, as the stock firmware's board file sets them. */
 static const uint8_t PIN_SDA = 2, PIN_SCL = 3;
 static const uint8_t PIN_MCLK = 0, PIN_BCK = 1, PIN_WS = 4, PIN_DIN = 10;   // stock also names DOUT 7; nothing audible is on it
@@ -60,7 +103,9 @@ static const uint8_t PIN_BUTTON = 9;   // to ground when pressed; stock reads it
 
 /* Sent as raw bytes in wire order; the colour order is a setting because it
    has not been confirmed on the real LEDs yet (GRB is only the usual one). */
+#if !defined(BOARD_RGB)
 static Adafruit_NeoPixel strip(LED_COUNT, LED_PIN, NEO_RGB + NEO_KHZ800);
+#endif
 static WebServer server(80);
 static Preferences prefs;
 
@@ -192,6 +237,11 @@ static void configToJson(JsonDocument &doc) {
   doc["brightness"] = brightness;
   doc["order"] = order;
   doc["reversed"] = reversed;
+#if defined(BOARD_STATUS)
+  doc["stripLength"] = stripLength;
+#elif defined(BOARD_RGB)
+  doc["split"] = rgbSplit;
+#endif
   doc["cool"]["minutes"] = coolMinutes;
   doc["cool"]["target"] = coolTarget;
   doc["mode"] = MODE_NAMES[mode];
@@ -224,6 +274,15 @@ static const char *applyConfig(JsonVariantConst doc) {
     strcpy(order, ORDERS[at]);
   }
   if (!doc["reversed"].isNull()) reversed = doc["reversed"].as<bool>();
+#if defined(BOARD_STATUS)
+  if (!doc["stripLength"].isNull()) {
+    int value = doc["stripLength"].as<int>();
+    if (value < 1 || value > STRIP_MAX) return "The strip is 1-300 LEDs";
+    stripLength = value;
+  }
+#elif defined(BOARD_RGB)
+  if (!doc["split"].isNull()) rgbSplit = doc["split"].as<bool>();
+#endif
   if (!doc["cool"]["minutes"].isNull()) {
     int value = doc["cool"]["minutes"].as<int>();
     if (value < 0 || value > 120) return "Cool-down is 0-120 minutes";
@@ -237,6 +296,9 @@ static const char *applyConfig(JsonVariantConst doc) {
   if (!doc["mode"].isNull()) {
     int at = findName(MODE_NAMES, MODE_COUNT, doc["mode"].as<const char *>());
     if (at < 0) return "Mode is status or music";
+#if !defined(BOARD_P2)
+    if (at == MODE_MUSIC) return "Music mode needs the P2's microphone, which this board does not have";
+#endif
     mode = at;
   }
   if (!doc["music"]["sensitivity"].isNull()) {
@@ -311,7 +373,11 @@ static void loadConfig() {
  * arrangement the stock firmware and every LAN client has.
  */
 static String prIp, prSerial, prCode;
-static SemaphoreHandle_t prLock;              // the three strings above are read by the link's task and written by the web handler
+static SemaphoreHandle_t prLock;              // the strings above and the two below are read by the link's task and written by the web handler
+/* Which kind of printer: Bambu (MQTT, above) or Klipper (Moonraker's HTTP API). For Klipper, prIp is the host, prCode an optional Moonraker API key, prSerial unused. */
+enum PrinterKind : uint8_t { PR_BAMBU, PR_KLIPPER };
+static uint8_t prKind = PR_BAMBU;
+static uint16_t prPort = 7125;
 static volatile bool prRestart = false;       // settings changed: drop the link and start again
 /* Set while a firmware download runs: two TLS sessions at once leave the chip
    too little memory to be sure of finishing the one that matters. */
@@ -439,18 +505,80 @@ static void prWait(uint32_t ms) {
   while (!prRestart && millis() - from < ms) vTaskDelay(pdMS_TO_TICKS(200));
 }
 
+/**
+ * Klipper, through Moonraker: one small query every two seconds, mapped onto
+ * the same words the Bambu link uses (RUNNING, PAUSE, FINISH, FAILED, IDLE) so
+ * the cool-down and everything after it is shared. Moonraker's query answer
+ * is a few hundred bytes, so plain polling is simpler and lighter here than
+ * holding its websocket open. Klipper itself shut down or in error counts as
+ * an error on the bar: the printer cannot print in that state.
+ */
+static void klipperPoll(const String &host, uint16_t port, const String &key) {
+  String address = host;
+  /* The HTTP client does not look up .local names itself; mDNS does. */
+  if (host.endsWith(".local")) {
+    IPAddress found = MDNS.queryHost(host.substring(0, host.length() - 6), 2000);
+    if (found == IPAddress()) { prConnected = false; prSetError("Could not find that .local name"); prWait(10000); return; }
+    address = found.toString();
+  }
+  WiFiClient net;
+  HTTPClient http;
+  http.setConnectTimeout(4000);
+  http.setTimeout(5000);
+  const String url = "http://" + address + ":" + String(port) +
+    "/printer/objects/query?webhooks=state&print_stats=state&display_status=progress&virtual_sdcard=progress&heater_bed=temperature";
+  if (!http.begin(net, url)) { prConnected = false; prSetError("That address does not work"); prWait(15000); return; }
+  if (key.length()) http.addHeader("X-Api-Key", key);
+  const int code = http.GET();
+  if (code <= 0) { http.end(); prConnected = false; prSetError("Klipper not reachable"); prWait(10000); return; }
+  if (code == 401 || code == 403) { http.end(); prConnected = false; prSetError("Moonraker wants an API key"); prWait(30000); return; }
+  if (code != 200) {
+    http.end(); prConnected = false;
+    char text[40]; snprintf(text, sizeof text, "Moonraker answered %d", code); prSetError(text);
+    prWait(10000); return;
+  }
+  JsonDocument filter;
+  filter["result"]["status"] = true;
+  JsonDocument doc;
+  const DeserializationError bad = deserializeJson(doc, http.getStream(), DeserializationOption::Filter(filter));
+  http.end();
+  if (bad) { prConnected = false; prSetError("Moonraker's answer did not read"); prWait(10000); return; }
+  JsonObjectConst st = doc["result"]["status"];
+  const char *hooks = st["webhooks"]["state"] | "ready";
+  const char *ps = st["print_stats"]["state"] | "standby";
+  const char *gcode = "IDLE";
+  if (!strcmp(hooks, "shutdown") || !strcmp(hooks, "error")) gcode = "FAILED";
+  else if (!strcmp(ps, "printing")) gcode = "RUNNING";
+  else if (!strcmp(ps, "paused")) gcode = "PAUSE";
+  else if (!strcmp(ps, "complete")) gcode = "FINISH";
+  else if (!strcmp(ps, "error")) gcode = "FAILED";
+  strlcpy(prGcode, gcode, sizeof prGcode);
+  /* display_status follows M73 from the slicer when it sends it; virtual_sdcard is the file position. The larger is the better guess. */
+  const float shown = max(st["display_status"]["progress"] | -1.0f, st["virtual_sdcard"]["progress"] | -1.0f);
+  prPercent = shown < 0 ? -1 : (int)lroundf(shown * 100);
+  prBed = st["heater_bed"]["temperature"].isNull() ? NAN : st["heater_bed"]["temperature"].as<float>();
+  prLastMsgAt = millis();
+  prConnected = true;
+  prSetError("");
+  prWait(2000);
+}
+
 static void printerTask(void *) {
   static uint8_t buf[512];
   static uint8_t packet[200];
   for (;;) {
-    prConnected = false;
     xSemaphoreTake(prLock, portMAX_DELAY);
     String ip = prIp, serial = prSerial, code = prCode;
+    const uint8_t kind = prKind;
+    const uint16_t port = prPort;
     xSemaphoreGive(prLock);
     prRestart = false;
-    if (prPaused) { prSetError("Paused while a firmware update downloads"); prWait(1000); continue; }
-    if (!ip.length() || !serial.length()) { prSetError(""); prWait(2000); continue; }
-    if (WiFi.status() != WL_CONNECTED) { prSetError("Waiting for Wi-Fi"); prWait(2000); continue; }
+    if (prPaused) { prConnected = false; prSetError("Paused while a firmware update downloads"); prWait(1000); continue; }
+    if (!ip.length() || (kind == PR_BAMBU && !serial.length())) { prConnected = false; prSetError(""); prWait(2000); continue; }
+    if (WiFi.status() != WL_CONNECTED) { prConnected = false; prSetError("Waiting for Wi-Fi"); prWait(2000); continue; }
+    /* Klipper's link stays "connected" between polls, so it is not reset at the top of each pass. */
+    if (kind == PR_KLIPPER) { klipperPoll(ip, port, code); continue; }
+    prConnected = false;
 
     WiFiClientSecure net;
     net.setInsecure();
@@ -1038,6 +1166,70 @@ static void paintEffect(uint8_t effect, uint32_t colour, uint32_t colour2, uint8
 static volatile int8_t barProgress = -1;
 static const uint32_t PROGRESS_COLOUR = 0x3B82F6;
 
+/* Home Assistant can switch the light off, which darkens everything except an update's progress. Defined with the rest of Home Assistant, below. */
+static volatile bool haOff = false;
+static volatile bool haManual = false;
+static Look haLook(0xFFFFFF, FX_SOLID, 50);
+
+/* The one place the 25-LED picture in frame[] reaches the hardware, so every board shares every effect. */
+static void wireOrder(uint8_t r, uint8_t g, uint8_t b, uint8_t wire[3]) {
+  for (int c = 0; c < 3; c++) wire[c] = order[c] == 'R' ? r : order[c] == 'G' ? g : b;
+}
+
+#if defined(BOARD_RGB)
+static void outBegin() {
+  for (int s = 0; s < 2; s++) {
+    pinMode(RGB_ENABLE_PINS[s], OUTPUT);
+    digitalWrite(RGB_ENABLE_PINS[s], HIGH);
+    for (int c = 0; c < 3; c++) {
+      /* 5 kHz, 8 bits: above anything a camera or an eye picks up as flicker, and 8 bits is all the picture carries. */
+      ledcSetup(s * 3 + c, 5000, 8);
+      ledcAttachPin(RGB_PINS[s][c], s * 3 + c);
+      ledcWrite(s * 3 + c, 0);
+    }
+  }
+}
+static void outShow() {
+  for (int s = 0; s < 2; s++) {
+    /* An average, so a half-full progress bar is half as bright rather than a guess at one LED. */
+    int from = 0, to = LED_COUNT;
+    if (rgbSplit) { from = s == 0 ? 0 : LED_COUNT / 2; to = s == 0 ? (LED_COUNT + 1) / 2 : LED_COUNT; }
+    if (reversed && rgbSplit) { const int f = LED_COUNT - to, t = LED_COUNT - from; from = f; to = t; }
+    uint32_t sum[3] = {0, 0, 0};
+    for (int i = from; i < to; i++) for (int c = 0; c < 3; c++) sum[c] += frame[i][c];
+    const int n = max(1, to - from);
+    uint8_t wire[3];
+    wireOrder(sum[0] / n, sum[1] / n, sum[2] / n, wire);
+    for (int c = 0; c < 3; c++) ledcWrite(s * 3 + c, wire[c]);
+  }
+}
+#else
+static void outBegin() {
+#if defined(BOARD_STATUS)
+  strip.updateLength(stripLength);
+#endif
+  strip.begin();
+  strip.clear();
+  strip.show();
+}
+static void outShow() {
+#if defined(BOARD_STATUS)
+  if (strip.numPixels() != stripLength) { strip.clear(); strip.show(); strip.updateLength(stripLength); }
+  const int n = strip.numPixels();
+#else
+  const int n = LED_COUNT;
+#endif
+  for (int j = 0; j < n; j++) {
+    /* Nearest of the 25: a longer strip shows the same picture, stretched. */
+    const int i = n == LED_COUNT ? j : min(LED_COUNT - 1, j * LED_COUNT / n);
+    uint8_t wire[3];
+    wireOrder(frame[i][0], frame[i][1], frame[i][2], wire);
+    strip.setPixelColor(reversed ? n - 1 - j : j, wire[0], wire[1], wire[2]);
+  }
+  strip.show();
+}
+#endif
+
 static void renderProgress() {
   const float lit = barProgress / 100.0f * LED_COUNT;
   const float level = max((schedActive() ? schedLevel : brightness) / 100.0f, 0.5f);
@@ -1048,11 +1240,8 @@ static void renderProgress() {
     const float scale = v * v * level;
     const uint8_t r = ((PROGRESS_COLOUR >> 16) & 255) * scale, g = ((PROGRESS_COLOUR >> 8) & 255) * scale, b = (PROGRESS_COLOUR & 255) * scale;
     frame[i][0] = r; frame[i][1] = g; frame[i][2] = b;
-    uint8_t wire[3];
-    for (int c = 0; c < 3; c++) wire[c] = order[c] == 'R' ? r : order[c] == 'G' ? g : b;
-    strip.setPixelColor(reversed ? LED_COUNT - 1 - i : i, wire[0], wire[1], wire[2]);
   }
-  strip.show();
+  outShow();
 }
 
 static void render() {
@@ -1061,15 +1250,18 @@ static void render() {
   Source source;
   const State state = shown(fill, source);
   /* Music mode takes the bar over, except while a look is being tried from the page. */
-  const bool music = mode == MODE_MUSIC && source != SRC_PREVIEW;
+  /* A colour or effect chosen in Home Assistant holds the bar until it is handed back ("Follow the printer"); only a look being tried from the page goes over it. */
+  const bool manual = haManual && source != SRC_PREVIEW;
+  const bool music = !manual && mode == MODE_MUSIC && source != SRC_PREVIEW;
   const bool notice = noticeUntil && millis() < noticeUntil;
   if (!notice) noticeUntil = 0;
   /* An add-on gets the bar only in the mode that follows the printer, and never over a look being tried. */
-  const Addon *addon = music || source == SRC_PREVIEW ? nullptr : addonNow(state);
+  const Addon *addon = manual || music || source == SRC_PREVIEW ? nullptr : addonNow(state);
   /* An add-on that sends a "look" is drawn by the same effects as the bar's own states. */
-  const Look look = addon && addon->kind == ADDON_LOOK ? addon->look : looks[state];
+  const Look look = manual ? haLook : addon && addon->kind == ADDON_LOOK ? addon->look : looks[state];
   if (addon && addon->kind == ADDON_LOOK) fill = addon->fill;
-  const bool dark = state == ST_OFF && !addon;
+  if (manual) fill = 100;
+  const bool dark = state == ST_OFF && !addon && !manual;
   const float fillTo = fill / 100.0f * LED_COUNT;
   const float t = millis() / 1000.0f;
   /* 1-100 on the page is 0.1 to 2 cycles a second. */
@@ -1132,17 +1324,13 @@ static void render() {
         }
         break;
     }
-    if (dark && !music && !notice) v = 0;
+    if ((dark && !music && !notice) || haOff) v = 0;
     /* Squared: LEDs are far from linear, and without it "breathe" spends most of its time looking fully on. */
     const float scale = v * v * level;
     r = r * scale; g = g * scale; b = b * scale;
     frame[i][0] = r; frame[i][1] = g; frame[i][2] = b;
-
-    uint8_t wire[3];
-    for (int c = 0; c < 3; c++) wire[c] = order[c] == 'R' ? r : order[c] == 'G' ? g : b;
-    strip.setPixelColor(reversed ? LED_COUNT - 1 - i : i, wire[0], wire[1], wire[2]);
   }
-  strip.show();
+  outShow();
 }
 
 /* ----------------------------------------------------------- Wi-Fi -- */
@@ -1196,7 +1384,7 @@ static String apSsid, apPass;
 static bool apAlways = false;
 
 static void loadAp() {
-  apSsid = prefs.getString("apssid", "PandaP2-Setup");
+  apSsid = prefs.getString("apssid", AP_DEFAULT_SSID);
   apPass = prefs.getString("appass", "");
   if (apPass.length() < 8) apPass = apPassword();
   apAlways = prefs.getBool("apalways", false);
@@ -1245,8 +1433,8 @@ static void bootOtherSlot() {
   esp_app_desc_t desc;
   if (!otherSlot(part, desc)) return;
   if (esp_ota_set_boot_partition(part) != ESP_OK) return;
-  strip.clear();
-  strip.show();
+  memset(frame, 0, sizeof frame);
+  outShow();
   delay(200);
   ESP.restart();
 }
@@ -1303,6 +1491,10 @@ static void watchTrial() {
  * Each is answered on the LEDs for a moment so the press is seen to land.
  */
 static void buttonAction(uint8_t kind) {
+#if !defined(BOARD_P2)
+  /* Without the P2's microphone, presses have nothing to do; only the hold for the hotspot means anything. */
+  if (kind != 3) return;
+#endif
   if (kind == 1) {
     sensitivity = (sensitivity + 1) % SENS_COUNT;
     saveConfig();
@@ -1341,6 +1533,7 @@ static void pollButton() {
 }
 
 static void onlineToJson(JsonDocument &doc);   // in the online section, below
+static void haToJson(JsonDocument &doc);       // in the Home Assistant section, below
 
 /* ------------------------------------------------------------- API -- */
 
@@ -1372,6 +1565,8 @@ static void handleStatus() {
   doc["build"] = BUILD_ID;
   doc["uptime"] = millis() / 1000;
   doc["heap"] = ESP.getFreeHeap();
+  /* The largest single piece: a TLS session needs one big block, so this, not the total, says whether HTTPS will start. */
+  doc["heapBlock"] = ESP.getMaxAllocHeap();
   doc["ip"] = WiFi.localIP().toString();
   doc["rssi"] = WiFi.status() == WL_CONNECTED ? WiFi.RSSI() : 0;
   doc["setupNetwork"] = apUp;
@@ -1388,12 +1583,15 @@ static void handleStatus() {
   else ap["defaultPassword"] = nullptr;
   doc["onTrial"] = onTrial;
   doc["leds"] = LED_COUNT;
+  doc["board"] = BOARD_ID;
+  doc["boardName"] = BOARD_NAME;
 
   float fill;
   Source source;
   const State state = shown(fill, source);
   doc["state"] = ST_NAMES[state];
-  doc["source"] = SRC_NAMES[source];
+  doc["source"] = haManual && source != SRC_PREVIEW ? "homeassistant" : SRC_NAMES[source];
+  doc["lightOff"] = (bool)haOff;
   doc["said"] = ST_NAMES[current];
   doc["progress"] = fill;
   doc["previewing"] = source == SRC_PREVIEW;
@@ -1425,6 +1623,7 @@ static void handleStatus() {
   else doc["addonShowing"] = nullptr;
 
   onlineToJson(doc);
+  haToJson(doc);
 
   /* The microphone: whether the chip answered, how loud the last block was (dB below full scale), and what the meter makes of it. */
   JsonObject mic = doc["mic"].to<JsonObject>();
@@ -1438,9 +1637,13 @@ static void handleStatus() {
   /* The bar's own printer link. The access code is never sent back out. */
   JsonObject printer = doc["printer"].to<JsonObject>();
   xSemaphoreTake(prLock, portMAX_DELAY);
-  printer["paired"] = prIp.length() > 0 && prSerial.length() > 0;
+  printer["paired"] = prIp.length() > 0 && (prKind == PR_KLIPPER || prSerial.length() > 0);
+  printer["type"] = prKind == PR_KLIPPER ? "klipper" : "bambu";
   printer["ip"] = prIp;
   printer["serial"] = prSerial;
+  printer["port"] = prPort;
+  /* Whether a Moonraker key is set, never the key. */
+  printer["hasKey"] = prKind == PR_KLIPPER && prCode.length() > 0;
   xSemaphoreGive(prLock);
   printer["connected"] = (bool)prConnected;
   printer["error"] = prError;
@@ -1484,17 +1687,22 @@ static void handleStatus() {
   sendJson(200, doc);
 }
 
-/* What a controller calls every few seconds: {"state":"printing","progress":42}. */
-static void handleState() {
-  JsonDocument doc;
-  if (!readBody(doc)) return;
+/* What a controller sends every few seconds, over HTTP or MQTT: {"state":"printing","progress":42}. */
+static const char *applyPushedState(JsonVariantConst doc) {
   int at = findName(ST_NAMES, ST_COUNT, doc["state"].as<const char *>());
-  if (at < 0 || at == ST_OFFLINE) return sendResult(false, "Unknown state");
+  if (at < 0 || at == ST_OFFLINE) return "Unknown state";
   current = (State)at;
   if (!doc["progress"].isNull()) progress = constrain(doc["progress"].as<float>(), 0.0f, 100.0f);
   lastPushAt = millis();
   everPushed = true;
-  sendResult(true);
+  return nullptr;
+}
+
+static void handleState() {
+  JsonDocument doc;
+  if (!readBody(doc)) return;
+  const char *error = applyPushedState(doc.as<JsonVariantConst>());
+  sendResult(!error, error);
 }
 
 static void handleConfig() {
@@ -1624,7 +1832,7 @@ static void handleAddon() {
 }
 
 /* What the bar can be asked to do, for anyone writing something to talk to it. */
-static const char API_DOC[] PROGMEM = R"JSON({"about":"Panda Status P2 custom firmware. JSON in, JSON out, no sign-in; every POST answers {ok, message?}.",
+static const char API_DOC[] PROGMEM = R"JSON({"about":"Panda State, open firmware for BIQU Panda Status P2, Panda Status, Panda Lux RGB and Panda RGB Controller (board in /api/status). JSON in, JSON out, no sign-in; every POST answers {ok, message?}.",
 "endpoints":[
 {"call":"GET /api/status","does":"Everything: what is showing and why, printer link, microphone, clock, add-ons, settings, the 25 LEDs as hex"},
 {"call":"POST /api/state","body":{"state":"idle|printing|paused|finished|cooling|ready|error|off","progress":"0-100"},"does":"A controller saying what the printer is doing. Repeat at least every 45 s; when it stops, the bar's own printer link takes over"},
@@ -1632,6 +1840,8 @@ static const char API_DOC[] PROGMEM = R"JSON({"about":"Panda Status P2 custom fi
 {"call":"POST /api/config","body":{"brightness":"0-100","mode":"status|music","music":{"sensitivity":"low|medium|high|auto"},"states":{"<state>":{"colour":"#RRGGBB","colour2":"#RRGGBB or auto","effect":"solid|breathe|fill|flash|chase|rainbow|gradient|waves|scroll|theatre|scanner|meteor|fire|twinkle|sparkle|rain|aurora","speed":"1-100"}},"cool":{"minutes":"0-120","target":"20-60"},"schedule":{"enabled":true,"from":"HH:MM","to":"HH:MM","level":"0-100"},"time":{"tz":"POSIX rule","zone":"label"},"addon":{"show":"<id> or empty","when":"idle|always"},"order":"GRB|RGB|...","reversed":false},"does":"Change any subset of the settings; saved"},
 {"call":"POST /api/preview","body":{"state":"<state>","progress":"0-100","seconds":"1-120"},"does":"Show a state briefly without it counting as the printer's"},
 {"call":"POST /api/printer","body":{"ip":"...","serial":"...","code":"..."},"does":"Pair with a Bambu printer; {forget:true} unpairs"},
+{"call":"POST /api/printer","body":{"type":"klipper","host":"IP or name.local","port":"7125","key":"Moonraker API key, optional"},"does":"Follow a Klipper printer through Moonraker instead (polled every 2 s)"},
+{"call":"POST /api/ha","body":{"on":"true|false","host":"broker","port":"1883","user":"...","password":"...","prefix":"homeassistant"},"does":"Home Assistant over MQTT with discovery: a light, sensors and (P2) a Mode select appear by themselves. <topic>/state/set takes the same JSON as POST /api/state. Status in /api/status under homeAssistant"},
 {"call":"POST /api/wifi","body":{"ssid":"...","password":"..."},"does":"Save Wi-Fi and restart"},
 {"call":"GET /api/wifi/scan","does":"Networks in range. The first call starts a scan and answers {scanning:true}; ask again for {networks:[{ssid,rssi,open}]}. ?again starts a fresh one"},
 {"call":"POST /api/ap","body":{"always":"true|false","ssid":"1-32","password":"8-63, or empty for the default"},"does":"The bar's own hotspot: by default it comes up after a minute without Wi-Fi; always keeps it on. At 192.168.4.1"},
@@ -1712,7 +1922,21 @@ static void handlePrinter() {
   JsonDocument doc;
   if (!readBody(doc)) return;
   String ip, serial, code;
-  if (!doc["forget"].as<bool>()) {
+  const bool klipper = !doc["forget"].as<bool>() && strcmp(doc["type"] | "bambu", "klipper") == 0;
+  uint16_t port = 7125;
+  if (klipper) {
+    ip = doc["host"] | "";
+    code = doc["key"] | "";
+    ip.trim(); code.trim();
+    if (!doc["port"].isNull()) {
+      const int p = doc["port"].as<int>();
+      if (p < 1 || p > 65535) return sendResult(false, "The port is 1-65535");
+      port = p;
+    }
+    if (!ip.length() || ip.length() > 63 || ip.indexOf(' ') >= 0 || ip.indexOf('/') >= 0 || ip.indexOf(':') >= 0)
+      return sendResult(false, "Give Klipper's address, e.g. 192.168.1.60 or mainsail.local, without http:// or a port");
+    if (code.length() > 64) return sendResult(false, "That API key is too long");
+  } else if (!doc["forget"].as<bool>()) {
     ip = doc["ip"].as<const char *>() ? doc["ip"].as<const char *>() : "";
     serial = doc["serial"].as<const char *>() ? doc["serial"].as<const char *>() : "";
     code = doc["code"].as<const char *>() ? doc["code"].as<const char *>() : "";
@@ -1725,14 +1949,17 @@ static void handlePrinter() {
   prefs.putString("pip", ip);
   prefs.putString("psn", serial);
   prefs.putString("pcode", code);
+  prefs.putUChar("ptype", klipper ? PR_KLIPPER : PR_BAMBU);
+  prefs.putUShort("pport", port);
   /* Remembered, so an unpaired bar does not quietly pair itself again from the stock firmware's old record. */
   prefs.putBool("pset", true);
   xSemaphoreTake(prLock, portMAX_DELAY);
   prIp = ip; prSerial = serial; prCode = code;
+  prKind = klipper ? PR_KLIPPER : PR_BAMBU; prPort = port;
   xSemaphoreGive(prLock);
-  prGcode[0] = 0; prPercent = -1; prBed = NAN; prLastMsgAt = 0;
+  prGcode[0] = 0; prPercent = -1; prBed = NAN; prLastMsgAt = 0; prConnected = false;
   prRestart = true;
-  sendResult(true, ip.length() ? "Saved. Connecting to the printer." : "Unpaired.");
+  sendResult(true, !ip.length() ? "Unpaired." : klipper ? "Saved. Asking Klipper." : "Saved. Connecting to the printer.");
 }
 
 static void handleSlot() {
@@ -1885,7 +2112,7 @@ static bool updCheck() {
   updAssetName = updAssetUrl = updSumsUrl = "";
   for (JsonVariantConst a : doc["assets"].as<JsonArrayConst>()) {
     String name = a["name"] | "";
-    if (name.startsWith("panda-p2-custom-") && name.endsWith(".bin")) { updAssetName = name; updAssetUrl = a["browser_download_url"] | ""; }
+    if (name.startsWith("panda-" BOARD_ID "-custom-") && name.endsWith(".bin")) { updAssetName = name; updAssetUrl = a["browser_download_url"] | ""; }
     if (name == "SHA256SUMS.txt") updSumsUrl = a["browser_download_url"] | "";
   }
   updCheckedAt = millis();
@@ -2318,15 +2545,331 @@ static void handleAddonFile() {
   sendResult(true, "Loading");
 }
 
+/* -------------------------------------------------- Home Assistant -- */
+
+/**
+ * Home Assistant over MQTT, with discovery: point the bar at the broker
+ * Home Assistant already uses (the Mosquitto add-on, usually) and a device
+ * appears with no YAML. It carries:
+ *  - a light: on/off, brightness, colour and effect. A colour or effect chosen
+ *    there holds the bar until "Follow the printer" is picked again; off
+ *    darkens it whatever else is going on.
+ *  - sensors: what the bar is showing, the print's progress, Wi-Fi signal.
+ *  - a Mode select (P2 only: Music needs its microphone).
+ * And it listens on <base>/state/set for the same JSON as POST /api/state, so
+ * an automation can drive the bar like any other controller.
+ *
+ * Plain MQTT on the LAN (port 1883 by default), user and password optional:
+ * the same trust as the rest of this page. The password is never sent back.
+ */
+static bool haOn = false;
+static String haHost, haUser, haPass, haPrefix = "homeassistant";
+static uint16_t haPort = 1883;
+static SemaphoreHandle_t haLock;               // the settings above, written by the page, read by the task
+static volatile bool haRestart = false;
+static volatile bool haConnected = false;
+static volatile bool haResend = false;         // Home Assistant restarted: send discovery again
+static char haError[48] = "";
+static String haId, haBase;
+static String haLivePrefix = "homeassistant";   // the prefix of the connection that is up; only the task touches it
+static const char *HA_FOLLOW = "Follow the printer";
+
+static void haLoad() {
+  haOn = prefs.getBool("haon", false);
+  haHost = prefs.getString("hahost", "");
+  haPort = prefs.getUShort("haport", 1883);
+  haUser = prefs.getString("hauser", "");
+  haPass = prefs.getString("hapass", "");
+  haPrefix = prefs.getString("haprefix", "homeassistant");
+  char id[20];
+  snprintf(id, sizeof id, "panda_%06x", (uint32_t)(ESP.getEfuseMac() >> 24) & 0xFFFFFF);
+  haId = id;
+  haBase = String("panda/") + id;
+}
+
+static void haMessage(char *topicText, byte *payload, unsigned int length) {
+  const String topic(topicText);
+  if (topic == haLivePrefix + "/status") {
+    if (length == 6 && !memcmp(payload, "online", 6)) haResend = true;
+    return;
+  }
+  if (topic == haBase + "/mode/set") {
+    String value; value.reserve(length);
+    for (unsigned i = 0; i < length; i++) value += (char)payload[i];
+    JsonDocument doc;
+    doc["mode"] = value;
+    if (!applyConfig(doc.as<JsonVariantConst>())) saveConfig();
+    return;
+  }
+  JsonDocument doc;
+  if (deserializeJson(doc, payload, length)) return;
+  if (topic == haBase + "/state/set") { applyPushedState(doc.as<JsonVariantConst>()); return; }
+  if (topic != haBase + "/light/set") return;
+  if (!doc["state"].isNull()) haOff = strcmp(doc["state"] | "ON", "OFF") == 0;
+  if (!doc["brightness"].isNull()) { brightness = constrain(doc["brightness"].as<int>(), 0, 100); saveConfig(); }
+  if (!doc["color"].isNull()) {
+    haLook.colour = ((uint32_t)constrain(doc["color"]["r"] | 0, 0, 255) << 16) | ((uint32_t)constrain(doc["color"]["g"] | 0, 0, 255) << 8) | constrain(doc["color"]["b"] | 0, 0, 255);
+    haManual = true;
+  }
+  if (!doc["effect"].isNull()) {
+    const char *effect = doc["effect"] | "";
+    if (!strcmp(effect, HA_FOLLOW)) haManual = false;
+    else {
+      const int fx = findName(FX_NAMES, FX_COUNT, effect);
+      if (fx >= 0) { haLook.effect = fx; haManual = true; }
+    }
+  }
+}
+
+/* One entity's discovery record. */
+static void haAnnounce(PubSubClient &mq, const char *component, const char *object, JsonDocument &config) {
+  config["uniq_id"] = haId + "_" + object;
+  config["obj_id"] = haId + "_" + object;
+  config["avty_t"] = haBase + "/status";
+  JsonObject dev = config["dev"].to<JsonObject>();
+  dev["ids"].to<JsonArray>().add(haId);
+  dev["name"] = BOARD_NAME;
+  dev["mf"] = "BIQU hardware, custom firmware";
+  dev["mdl"] = BOARD_NAME;
+  dev["sw"] = FW_VERSION;
+  dev["cu"] = "http://" + WiFi.localIP().toString() + "/";
+  String text;
+  serializeJson(config, text);
+  mq.publish((haLivePrefix + "/" + component + "/" + haId + "/" + object + "/config").c_str(), text.c_str(), true);
+}
+
+static void haDiscovery(PubSubClient &mq) {
+  {
+    JsonDocument c;
+    c["name"] = nullptr;   // the light is the device itself
+    c["schema"] = "json";
+    c["cmd_t"] = haBase + "/light/set";
+    c["stat_t"] = haBase + "/light/state";
+    c["brightness"] = true;
+    c["brightness_scale"] = 100;
+    c["supported_color_modes"].to<JsonArray>().add("rgb");
+    c["effect"] = true;
+    JsonArray list = c["effect_list"].to<JsonArray>();
+    list.add(HA_FOLLOW);
+    for (int i = 0; i < FX_COUNT; i++) list.add(FX_NAMES[i]);
+    haAnnounce(mq, "light", "light", c);
+  }
+  {
+    JsonDocument c;
+    c["name"] = "Showing";
+    c["stat_t"] = haBase + "/info";
+    c["val_tpl"] = "{{ value_json.state }}";
+    c["ic"] = "mdi:printer-3d";
+    haAnnounce(mq, "sensor", "showing", c);
+  }
+  {
+    JsonDocument c;
+    c["name"] = "Progress";
+    c["stat_t"] = haBase + "/info";
+    c["val_tpl"] = "{{ value_json.progress }}";
+    c["unit_of_meas"] = "%";
+    c["stat_cla"] = "measurement";
+    c["ic"] = "mdi:progress-clock";
+    haAnnounce(mq, "sensor", "progress", c);
+  }
+  {
+    JsonDocument c;
+    c["name"] = "Wi-Fi signal";
+    c["stat_t"] = haBase + "/info";
+    c["val_tpl"] = "{{ value_json.rssi }}";
+    c["unit_of_meas"] = "dBm";
+    c["dev_cla"] = "signal_strength";
+    c["ent_cat"] = "diagnostic";
+    haAnnounce(mq, "sensor", "rssi", c);
+  }
+#if defined(BOARD_P2)
+  {
+    JsonDocument c;
+    c["name"] = "Mode";
+    c["cmd_t"] = haBase + "/mode/set";
+    c["stat_t"] = haBase + "/info";
+    c["val_tpl"] = "{{ value_json.mode }}";
+    JsonArray options = c["options"].to<JsonArray>();
+    for (int i = 0; i < MODE_COUNT; i++) options.add(MODE_NAMES[i]);
+    haAnnounce(mq, "select", "mode", c);
+  }
+#endif
+}
+
+static String haLightState() {
+  float fill;
+  Source source;
+  const State state = shown(fill, source);
+  const uint32_t colour = haManual ? haLook.colour : looks[state].colour;
+  JsonDocument d;
+  d["state"] = haOff ? "OFF" : "ON";
+  d["brightness"] = brightness;
+  d["color_mode"] = "rgb";
+  d["color"]["r"] = (colour >> 16) & 255;
+  d["color"]["g"] = (colour >> 8) & 255;
+  d["color"]["b"] = colour & 255;
+  d["effect"] = haManual ? FX_NAMES[haLook.effect] : HA_FOLLOW;
+  String text;
+  serializeJson(d, text);
+  return text;
+}
+
+static String haInfo() {
+  float fill;
+  Source source;
+  const State state = shown(fill, source);
+  JsonDocument d;
+  d["state"] = haOff ? "light off" : haManual && source != SRC_PREVIEW ? "set by Home Assistant" : mode == MODE_MUSIC && source != SRC_PREVIEW ? "music" : ST_NAMES[state];
+  d["progress"] = (int)lroundf(fill);
+  /* Rounded to 5 dB, so a signal that wobbles by one does not send a message every second. */
+  d["rssi"] = (int)(lroundf(WiFi.RSSI() / 5.0f) * 5);
+  d["mode"] = MODE_NAMES[mode];
+  String text;
+  serializeJson(d, text);
+  return text;
+}
+
+static void haWait(uint32_t ms) {
+  const uint32_t from = millis();
+  while (!haRestart && millis() - from < ms) vTaskDelay(pdMS_TO_TICKS(200));
+}
+
+static void haTask(void *) {
+  WiFiClient net;
+  PubSubClient mq(net);
+  /* Discovery records with the effect list run past a kilobyte; the library's default buffer is 256 bytes and drops anything larger without a word. */
+  mq.setBufferSize(1600);
+  mq.setCallback(haMessage);
+  mq.setKeepAlive(30);
+  mq.setSocketTimeout(5);
+  static String address;   // the library keeps the pointer, not a copy
+  String lastLight, lastInfo;
+  uint32_t sentAt = 0;
+  for (;;) {
+    if (haRestart) {
+      haRestart = false;
+      if (mq.connected()) { mq.publish((haBase + "/status").c_str(), "offline", true); mq.disconnect(); }
+      haConnected = false;
+    }
+    xSemaphoreTake(haLock, portMAX_DELAY);
+    const bool on = haOn;
+    const String host = haHost, user = haUser, pass = haPass;
+    const uint16_t port = haPort;
+    if (!mq.connected()) haLivePrefix = haPrefix;
+    xSemaphoreGive(haLock);
+    if (!on || !host.length()) { haConnected = false; haError[0] = 0; haWait(1000); continue; }
+    if (prPaused) { if (mq.connected()) mq.disconnect(); haConnected = false; strlcpy(haError, "Paused while a firmware update downloads", sizeof haError); haWait(1000); continue; }
+    if (WiFi.status() != WL_CONNECTED) { haConnected = false; strlcpy(haError, "Waiting for Wi-Fi", sizeof haError); haWait(2000); continue; }
+
+    if (!mq.connected()) {
+      haConnected = false;
+      address = host;
+      if (host.endsWith(".local")) {
+        IPAddress found = MDNS.queryHost(host.substring(0, host.length() - 6), 2000);
+        if (found == IPAddress()) { strlcpy(haError, "Could not find that .local name", sizeof haError); haWait(15000); continue; }
+        address = found.toString();
+      }
+      mq.setServer(address.c_str(), port);
+      const String will = haBase + "/status";
+      const bool ok = mq.connect(haId.c_str(), user.length() ? user.c_str() : nullptr, user.length() ? pass.c_str() : nullptr, will.c_str(), 0, true, "offline");
+      if (!ok) {
+        const int why = mq.state();
+        strlcpy(haError, why == 4 ? "Wrong user name or password" : why == 5 ? "The broker refused the sign-in" : why == -2 ? "Broker not reachable" : "The broker did not answer", sizeof haError);
+        haWait(15000);
+        continue;
+      }
+      mq.publish(will.c_str(), "online", true);
+      haDiscovery(mq);
+      mq.subscribe((haBase + "/light/set").c_str());
+      mq.subscribe((haBase + "/state/set").c_str());
+      mq.subscribe((haBase + "/mode/set").c_str());
+      mq.subscribe((haLivePrefix + "/status").c_str());
+      lastLight = ""; lastInfo = "";
+      haError[0] = 0;
+      haConnected = true;
+    }
+    mq.loop();
+    if (haResend) { haResend = false; haDiscovery(mq); lastLight = ""; lastInfo = ""; }
+    if (millis() - sentAt >= 1000) {
+      sentAt = millis();
+      const String light = haLightState(), info = haInfo();
+      if (light != lastLight) { mq.publish((haBase + "/light/state").c_str(), light.c_str(), true); lastLight = light; }
+      if (info != lastInfo) { mq.publish((haBase + "/info").c_str(), info.c_str(), true); lastInfo = info; }
+    }
+    vTaskDelay(pdMS_TO_TICKS(50));
+  }
+}
+
+/* Started only once Home Assistant is turned on: its stack and the MQTT buffer
+   are memory a second TLS session (the add-ons' HTTPS beside the printer link)
+   needs, and with them reserved anyway an add-on fetch failed "SSL - Memory
+   allocation failed" (measured on the P2, 0.7.0 test build). */
+static bool haStarted = false;
+static void haStart() {
+  if (haStarted) return;
+  haStarted = true;
+  xTaskCreate(haTask, "ha", 6144, nullptr, 1, nullptr);
+}
+
+static void haToJson(JsonDocument &doc) {
+  JsonObject ha = doc["homeAssistant"].to<JsonObject>();
+  xSemaphoreTake(haLock, portMAX_DELAY);
+  ha["on"] = haOn;
+  ha["host"] = haHost;
+  ha["port"] = haPort;
+  ha["user"] = haUser;
+  ha["hasPassword"] = haPass.length() > 0;
+  ha["prefix"] = haPrefix;
+  xSemaphoreGive(haLock);
+  ha["connected"] = (bool)haConnected;
+  ha["error"] = haError;
+  ha["topic"] = haBase;
+  ha["manual"] = (bool)haManual;
+}
+
+/* {"on":true,"host":"192.168.1.10","port":1883,"user":"panda","password":"…","prefix":"homeassistant"}; anything left out is kept. */
+static void handleHa() {
+  JsonDocument doc;
+  if (!readBody(doc)) return;
+  xSemaphoreTake(haLock, portMAX_DELAY);
+  bool on = haOn; String host = haHost, user = haUser, pass = haPass, prefix = haPrefix; uint16_t port = haPort;
+  xSemaphoreGive(haLock);
+  if (!doc["on"].isNull()) on = doc["on"].as<bool>();
+  if (!doc["host"].isNull()) { host = doc["host"] | ""; host.trim(); }
+  if (!doc["user"].isNull()) { user = doc["user"] | ""; user.trim(); }
+  if (!doc["password"].isNull()) pass = doc["password"] | "";
+  if (!doc["prefix"].isNull()) { prefix = doc["prefix"] | ""; prefix.trim(); }
+  if (!doc["port"].isNull()) {
+    const int p = doc["port"].as<int>();
+    if (p < 1 || p > 65535) return sendResult(false, "The port is 1-65535");
+    port = p;
+  }
+  if (host.length() > 63 || host.indexOf(' ') >= 0 || host.indexOf('/') >= 0 || host.indexOf(':') >= 0)
+    return sendResult(false, "Give the broker's address, e.g. 192.168.1.10 or homeassistant.local, without mqtt:// or a port");
+  if (on && !host.length()) return sendResult(false, "Give the broker's address first");
+  if (user.length() > 64 || pass.length() > 64) return sendResult(false, "User name and password are up to 64 characters");
+  if (!prefix.length() || prefix.length() > 40 || prefix.indexOf('#') >= 0 || prefix.indexOf('+') >= 0) return sendResult(false, "The discovery prefix is usually homeassistant");
+  prefs.putBool("haon", on);
+  prefs.putString("hahost", host);
+  prefs.putUShort("haport", port);
+  prefs.putString("hauser", user);
+  prefs.putString("hapass", pass);
+  prefs.putString("haprefix", prefix);
+  xSemaphoreTake(haLock, portMAX_DELAY);
+  haOn = on; haHost = host; haUser = user; haPass = pass; haPrefix = prefix; haPort = port;
+  xSemaphoreGive(haLock);
+  haRestart = true;
+  if (on) haStart();
+  sendResult(true, on ? "Saved. Connecting to the broker." : "Saved. Home Assistant is off.");
+}
+
 /* ------------------------------------------------------------ main -- */
 
 void setup() {
   Serial.begin(115200);
   prefs.begin("panda", false);
   loadConfig();
-  strip.begin();
-  strip.clear();
-  strip.show();
+  outBegin();
 
   onTrial = prefs.getString("okbuild", "") != BUILD_ID;
   startWifi();
@@ -2339,21 +2882,28 @@ void setup() {
     prIp = prefs.getString("pip", "");
     prSerial = prefs.getString("psn", "");
     prCode = prefs.getString("pcode", "");
+    prKind = prefs.getUChar("ptype", PR_BAMBU);
+    prPort = prefs.getUShort("pport", 7125);
   } else {
     readStockPairing(prIp, prSerial, prCode);
   }
   /* Its own task: a TLS handshake blocks for seconds, and the LEDs and the page must not freeze while it does. */
   xTaskCreate(printerTask, "printer", 12288, nullptr, 1, nullptr);
   /* The microphone runs all the time, not only in Music mode: it is a few percent of the processor, and the page can then show the level for setting the sensitivity. */
+#if defined(BOARD_P2)
   if (prefs.getString("audiotry", "") == BUILD_ID) {
     audioBlocked = true;
   } else {
     prefs.putString("audiotry", BUILD_ID);
     xTaskCreate(audioTask, "audio", 6144, nullptr, 1, nullptr);
   }
+#endif
   pinMode(PIN_BUTTON, INPUT_PULLUP);
   /* GitHub and file add-ons. Its own task for the same reason as the printer's: HTTPS blocks for seconds. */
   xTaskCreate(onlineTask, "online", 14336, nullptr, 1, nullptr);
+  haLock = xSemaphoreCreateMutex();
+  haLoad();
+  if (haOn) haStart();
 
   server.on("/", HTTP_GET, []() { server.send_P(200, "text/html", PAGE); });
   server.on("/api/status", HTTP_GET, handleStatus);
@@ -2378,6 +2928,7 @@ void setup() {
   server.on("/api/ap", HTTP_POST, handleAp);
   server.on("/api/wifi/scan", HTTP_GET, handleWifiScan);
   server.on("/api/update", HTTP_POST, handleUpdateApi);
+  server.on("/api/ha", HTTP_POST, handleHa);
   server.on("/update", HTTP_POST, handleUpdateDone, handleUpdateChunk);
   server.onNotFound([]() { sendResult(false, "Not found"); });
   server.begin();

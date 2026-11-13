@@ -2,7 +2,7 @@
     "id":  "bitcoin",
     "name":  "Bitcoin, last 24 hours",
     "description":  "A meter of the change in the price of bitcoin over the last day: half way is no change, full is up 10% or more, empty is down 10% or more. From CoinGecko, every 5 minutes.",
-    "author":  "panda-status-p2-firmware",
+    "author":  "Panda State",
     "source":  {
                    "url":  "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin\u0026vs_currencies=usd\u0026include_24hr_change=true",
                    "path":  "bitcoin.usd_24h_change",

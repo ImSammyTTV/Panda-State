@@ -2,7 +2,7 @@
     "id":  "police",
     "name":  "Police lights",
     "description":  "Red then blue, double flashes, the two halves of the bar taking turns.",
-    "author":  "panda-status-p2-firmware",
+    "author":  "Panda State",
     "frames":  {
                    "fps":  8,
                    "list":  [
