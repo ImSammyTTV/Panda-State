@@ -47,7 +47,7 @@
 
 /* What the firmware calls itself on its page and in /api/status. Plain and generic, so it says what it is on anyone's network. */
 #define FW_NAME "panda"
-#define FW_VERSION "0.7.1"
+#define FW_VERSION "0.7.2"
 /* Where new releases and the add-on store live. A release must carry a
    panda-<board>-custom-<version>.bin for each board and a SHA256SUMS.txt that lists them. */
 #define UPDATE_REPO "ImSammyTTV/Panda-State"
@@ -2236,6 +2236,7 @@ static uint8_t faFrameCount = 0, faFps = 4, faFrameAt = 0;
 static float faMin = 0, faMax = 100, faValue = NAN;
 static uint32_t faColour = 0xFFFFFF, faEveryMs = 300000, faFetchedAt = 0, faPushedAt = 0, faTriedAt = 0;
 static uint32_t faRetryAt = 0;                   // a failed fetch of a store add-on waits until then
+static uint8_t faFails = 0;                      // failed fetches in a row; the first is retried quietly
 
 static bool hexPixels(const char *hex, uint8_t out[LED_COUNT][3]) {
   if (!hex || strlen(hex) != LED_COUNT * 6) return false;
@@ -2385,9 +2386,22 @@ static void faTick() {
     if (faUrl.length()) {
       Fetch f;
       const int code = f.begin(faUrl);
-      if (code != 200) { faError = "Fetching it: " + f.error(code) + ". Trying again in a minute."; faReload = true; faRetryAt = millis() + 60000; return; }
+      if (code != 200) {
+        /* A first failure is retried quietly after a few seconds: a one-off
+           "certificate verification failed" from GitHub cleared on the very
+           next attempt (seen on the P2, 0.7.1), and was shown to the owner as
+           a broken add-on for a minute. Only a second failure in a row is
+           reported, with the largest free block at that moment, so the next
+           one says whether memory was short. */
+        faReload = true;
+        if (++faFails < 2) { faRetryAt = millis() + 5000; return; }
+        faError = "Fetching it: " + f.error(code) + " (largest free block " + String(ESP.getMaxAllocHeap() / 1024) + " KB). Trying again in a minute.";
+        faRetryAt = millis() + 60000;
+        return;
+      }
       if (f.http.getSize() > (int)FA_MAX_FETCH) { faError = "The add-on file is too big"; faPick = false; return; }
       text = f.http.getString();
+      faFails = 0;
     }
     if (!text.length()) { faPick = false; return; }
     if (const char *bad = faLoad(text)) { faError = bad; faKind = FA_NONE; faPick = false; return; }
@@ -2540,6 +2554,7 @@ static void handleAddonFile() {
     return sendResult(false, "Send url, file or remove");
   }
   faPick = true;
+  faFails = 0;
   faReload = true;
   faRetryAt = millis();
   sendResult(true, "Loading");

@@ -1,4 +1,4 @@
-b2f50d2ad26d338dc00cbad5337a6b42e880639ad50eec22e8175d662b9adad0  panda-p2-custom-0.7.1.bin
-34dcda656bf21afc9f70d7c60cbbc2d850f1c7865c88278c0b88cfa7995d3c2e  panda-status-custom-0.7.1.bin
-a576c78a92b76c186389490551b822611e8cf8848bb502f145f25e33d53e86f0  panda-lux-custom-0.7.1.bin
-69edd82ef679e70a133d295a193c49bebe8d3225fba045de8cc4fc39cdd963e7  panda-rgb-custom-0.7.1.bin
+d0e769d37407731d026c00f4780fe6c00bdabbff4d772cd3ac9a9c907df91adb  panda-p2-custom-0.7.2.bin
+ce07a373bfe66e39ffef006767a51ae9e88a42f2c1140e17e5a6cecccf8a9d26  panda-status-custom-0.7.2.bin
+ee846a4670b6989bfdfc42d69342d45c70f84220d9e81b34b18344b347ac90a2  panda-lux-custom-0.7.2.bin
+3588972a02ea2663f8e59ccdeeea6976d84a8a3d4a3e197c0025e0ffa1f6d181  panda-rgb-custom-0.7.2.bin

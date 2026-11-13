@@ -2,7 +2,7 @@
     "id":  "temp",
     "name":  "Temperature in {place}",
     "description":  "The temperature outside now, as a meter from -5 C (empty) to 40 C (full). Updated every 15 minutes. Weather data by Open-Meteo.com (CC BY 4.0).",
-    "author":  "Panda State",
+    "author":  "Sam",
     "source":  {
                    "url":  "https://api.open-meteo.com/v1/forecast?latitude={lat}\u0026longitude={lon}\u0026current=temperature_2m",
                    "path":  "current.temperature_2m",

@@ -2,7 +2,7 @@
     "id":  "campfire",
     "name":  "Campfire",
     "description":  "Flickering orange and red embers.",
-    "author":  "Panda State",
+    "author":  "Sam",
     "look":  {
                  "colour":  "#FF6A00",
                  "colour2":  "#FF1E00",

@@ -2,7 +2,7 @@
     "id":  "rainbow",
     "name":  "Rainbow",
     "description":  "Every colour, rolling end to end.",
-    "author":  "Panda State",
+    "author":  "Sam",
     "look":  {
                  "colour":  "#FF0000",
                  "effect":  "rainbow",

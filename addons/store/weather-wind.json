@@ -2,7 +2,7 @@
     "id":  "wind",
     "name":  "Wind in {place}",
     "description":  "The wind speed now, 0 to 60 km/h. Updated every 15 minutes. Weather data by Open-Meteo.com (CC BY 4.0).",
-    "author":  "Panda State",
+    "author":  "Sam",
     "source":  {
                    "url":  "https://api.open-meteo.com/v1/forecast?latitude={lat}\u0026longitude={lon}\u0026current=wind_speed_10m",
                    "path":  "current.wind_speed_10m",

@@ -2,7 +2,7 @@
     "id":  "ethereum",
     "name":  "Ethereum, last 24 hours",
     "description":  "The change in the price of ether over the last day: half way is no change, full is up 10% or more, empty is down 10% or more. From CoinGecko, every 5 minutes.",
-    "author":  "Panda State",
+    "author":  "Sam",
     "source":  {
                    "url":  "https://api.coingecko.com/api/v3/simple/price?ids=ethereum\u0026vs_currencies=usd\u0026include_24hr_change=true",
                    "path":  "ethereum.usd_24h_change",
