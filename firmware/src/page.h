@@ -10,68 +10,76 @@ static const char PAGE[] PROGMEM = R"HTML(<!doctype html>
 <title>Panda State</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%230b0e14'/%3E%3Crect x='6' y='23' width='52' height='18' rx='9' fill='%23171c26' stroke='%23ffffff' stroke-opacity='.14' stroke-width='1.5'/%3E%3Crect x='9' y='28' width='7.6' height='8' rx='2.5' fill='%23ff6a00'/%3E%3Crect x='18.6' y='28' width='7.6' height='8' rx='2.5' fill='%23ffd60a'/%3E%3Crect x='28.2' y='28' width='7.6' height='8' rx='2.5' fill='%2334c759'/%3E%3Crect x='37.8' y='28' width='7.6' height='8' rx='2.5' fill='%2300a8ff'/%3E%3Crect x='47.4' y='28' width='7.6' height='8' rx='2.5' fill='%23bf5af2'/%3E%3C/svg%3E">
 <style>
-:root{--bg:#07090e;--card:#0f131b;--line:rgba(255,255,255,.08);--text:#eef1f6;--t2:#aab2c0;--t3:#6f7888;--c:#009dff}
+/* Two themes from one set of tokens. --ink is the colour every translucent fill is made from (white on dark, black on light), so a fill keeps its weight in both. Auto follows the device; the switch in the header pins one, per browser. */
+:root{--bg:#07090e;--card:#0f131b;--line:rgba(var(--ink),.08);--text:#eef1f6;--t2:#aab2c0;--t3:#6f7888;--c:#009dff;--ink:255,255,255;--cardA:#0c1018;--cardB:#0a0d14;--tint:18%;--off:#111;--panel:rgba(0,0,0,.18);--scheme:dark}
+@media(prefers-color-scheme:light){:root:not([data-theme=dark]){--bg:#eef1f5;--card:#fff;--line:rgba(0,0,0,.1);--text:#12161d;--t2:#475062;--t3:#6b7382;--ink:0,0,0;--cardA:#fff;--cardB:#f6f8fb;--tint:10%;--off:#d5dae2;--panel:rgba(0,0,0,.035);--scheme:light}}
+:root[data-theme=light]{--bg:#eef1f5;--card:#fff;--line:rgba(0,0,0,.1);--text:#12161d;--t2:#475062;--t3:#6b7382;--ink:0,0,0;--cardA:#fff;--cardB:#f6f8fb;--tint:10%;--off:#d5dae2;--panel:rgba(0,0,0,.035);--scheme:light}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:15px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
 main{max-width:860px;margin:0 auto;padding:22px 16px 60px;display:flex;flex-direction:column;gap:16px}
 .card{position:relative;overflow:hidden;border-radius:28px;padding:22px 24px;border:1px solid color-mix(in srgb,var(--c) 18%,var(--line));
-background:linear-gradient(160deg,color-mix(in srgb,var(--c) 18%,#0c1018),#0a0d14 70%)}
+background:linear-gradient(160deg,color-mix(in srgb,var(--c) var(--tint),var(--cardA)),var(--cardB) 70%)}
 .head{display:flex;align-items:center;gap:12px}.head b{font-size:16px;font-weight:600}
 .chip{padding:4px 11px;border-radius:999px;font-size:12px;font-weight:600;background:color-mix(in srgb,var(--c) 28%,transparent)}
 .more{margin-left:auto;font-size:13px;color:var(--t3)}
 .big{font-size:54px;font-weight:250;letter-spacing:-.04em;margin:18px 0 2px;text-transform:capitalize}
 .sub{font-size:13px;color:var(--t3)}
-.bar{display:grid;grid-template-columns:repeat(25,1fr);gap:4px;margin-top:20px;padding:12px;border-radius:20px;background:rgba(255,255,255,.05);border:1px solid var(--line)}
-.bar i{height:22px;border-radius:6px;background:#111;transition:background-color .2s linear}
+.bar{display:grid;grid-template-columns:repeat(25,1fr);gap:4px;margin-top:20px;padding:12px;border-radius:20px;background:rgba(var(--ink),.05);border:1px solid var(--line)}
+.bar i{height:22px;border-radius:6px;background:var(--off);transition:background-color .2s linear}
 h2{font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--t3);margin:0 0 12px;font-weight:600}
 .row{display:grid;grid-template-columns:88px 44px 44px minmax(0,1fr) minmax(0,1fr) auto;gap:10px;align-items:center;padding:8px 0;border-top:1px solid var(--line)}
 .row:first-of-type{border-top:0}.row span{text-transform:capitalize}
 input[type=color]{width:44px;height:32px;padding:0;border:0;border-radius:10px;background:none}
-select,input[type=text],input[type=password],input[type=file]{width:100%;height:34px;border-radius:12px;border:1px solid var(--line);background:rgba(255,255,255,.06);color:var(--text);padding:0 10px;font:inherit;font-size:13.5px}
+select,input[type=text],input[type=password],input[type=file]{width:100%;height:34px;border-radius:12px;border:1px solid var(--line);background:rgba(var(--ink),.06);color:var(--text);padding:0 10px;font:inherit;font-size:13.5px}
 /* The open list of a select is drawn by the browser, not by the rule above: without these it came up as white text on a white list. */
-select,input[type=time]{color-scheme:dark}
-input[type=time]{height:34px;border-radius:12px;border:1px solid var(--line);background:rgba(255,255,255,.06);color:var(--text);padding:0 10px;font:inherit;font-size:13.5px}
+select,input[type=time]{color-scheme:var(--scheme)}
+input[type=time]{height:34px;border-radius:12px;border:1px solid var(--line);background:rgba(var(--ink),.06);color:var(--text);padding:0 10px;font:inherit;font-size:13.5px}
 code{font:12px ui-monospace,Consolas,monospace;color:var(--t2);word-break:break-all}a{color:var(--text)}
-select option{background:#141922;color:#eef1f6}
+select option{background:var(--card);color:var(--text)}
 input[type=file]{padding:6px 10px;height:auto}
 input[type=range]{width:100%;accent-color:var(--c)}
-button{height:34px;padding:0 14px;border-radius:999px;border:0;background:rgba(255,255,255,.09);color:var(--text);font:inherit;font-size:13px;cursor:pointer;white-space:nowrap}
-button:hover{background:rgba(255,255,255,.17)}button.go{background:var(--text);color:#0a0d14}
+button{height:34px;padding:0 14px;border-radius:999px;border:0;background:rgba(var(--ink),.09);color:var(--text);font:inherit;font-size:13px;cursor:pointer;white-space:nowrap}
+button:hover{background:rgba(var(--ink),.17)}button.go{background:var(--text);color:var(--bg)}
 .line{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-top:12px}.line label{font-size:13px;color:var(--t2)}
 .grow{flex:1;min-width:140px}.msg{font-size:13px;color:var(--t2);min-height:18px;margin-top:10px}
 .head2{display:flex;align-items:center;gap:8px;margin-bottom:12px}.head2 h2{margin:0}.head2 .sp{margin-left:auto;display:flex;gap:8px}
 .tiles,.store{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px;margin-top:14px}
-.tile{display:flex;flex-direction:column;gap:6px;padding:14px 16px;border-radius:20px;background:rgba(255,255,255,.045);border:1px solid var(--line);min-width:0}
-.tile[data-on]{border-color:color-mix(in srgb,var(--c) 55%,var(--line));background:color-mix(in srgb,var(--c) 12%,rgba(255,255,255,.04))}
+.tile{display:flex;flex-direction:column;gap:6px;padding:14px 16px;border-radius:20px;background:rgba(var(--ink),.045);border:1px solid var(--line);min-width:0}
+.tile[data-on]{border-color:color-mix(in srgb,var(--c) 55%,var(--line));background:color-mix(in srgb,var(--c) 12%,rgba(var(--ink),.04))}
 .tile .t{display:flex;align-items:center;gap:8px;font-weight:600;min-width:0}.tile .t span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .tile .d{font-size:12.5px;color:var(--t2);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .tile .acts{display:flex;gap:6px;margin-top:auto;padding-top:4px}.tile button{height:30px;font-size:12.5px}
 .dot{flex:none;width:8px;height:8px;border-radius:50%;background:#64748b}.dot[data-live]{background:#22c55e;box-shadow:0 0 0 3px rgba(34,197,94,.18)}.dot[data-bad]{background:#f59e0b}
-.tag{margin-left:auto;flex:none;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:600;color:var(--t2);background:rgba(255,255,255,.07)}
+.tag{margin-left:auto;flex:none;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:600;color:var(--t2);background:rgba(var(--ink),.07)}
 .empty{grid-column:1/-1;padding:16px;border-radius:18px;border:1px dashed var(--line);color:var(--t3);font-size:13px}
-.sig{display:inline-flex;align-items:flex-end;gap:2px;height:13px;margin-left:8px;vertical-align:-1px}.sig i{width:4px;border-radius:1px;background:rgba(255,255,255,.14)}.sig i:nth-child(1){height:4px}.sig i:nth-child(2){height:7px}.sig i:nth-child(3){height:10px}.sig i:nth-child(4){height:13px}
-.sw{display:grid;grid-template-columns:repeat(25,1fr);gap:2px;height:10px;margin:2px 0}.sw i{border-radius:2px;background:#222}
-.panel{margin-top:14px;padding:14px;border-radius:22px;background:rgba(0,0,0,.18);border:1px solid var(--line)}
+.sig{display:inline-flex;align-items:flex-end;gap:2px;height:13px;margin-left:8px;vertical-align:-1px}.sig i{width:4px;border-radius:1px;background:rgba(var(--ink),.14)}.sig i:nth-child(1){height:4px}.sig i:nth-child(2){height:7px}.sig i:nth-child(3){height:10px}.sig i:nth-child(4){height:13px}
+.sw{display:grid;grid-template-columns:repeat(25,1fr);gap:2px;height:10px;margin:2px 0}.sw i{border-radius:2px;background:var(--off)}
+.panel{margin-top:14px;padding:14px;border-radius:22px;background:var(--panel);border:1px solid var(--line)}
 details.byo{margin-top:14px;border-top:1px solid var(--line);padding-top:12px}details.byo summary{cursor:pointer;color:var(--t2);font-size:13px}
 /* Sections that fold: the header is the whole click target and carries a one-line summary, so a closed section still says how things are. */
 details.card>summary{list-style:none;display:flex;align-items:center;gap:12px;cursor:pointer;margin:-4px 0;padding:4px 0}
 details.card>summary::-webkit-details-marker{display:none}
 details.card>summary h2{margin:0;flex:none}
 details.card>summary .sum{flex:1;min-width:0;font-size:13px;color:var(--t2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-details.card>summary .chev{flex:none;width:28px;height:28px;border-radius:50%;display:grid;place-items:center;background:rgba(255,255,255,.07);transition:transform .2s}
+details.card>summary .chev{flex:none;width:28px;height:28px;border-radius:50%;display:grid;place-items:center;background:rgba(var(--ink),.07);transition:transform .2s}
 details.card>summary .chev::before{content:'';width:7px;height:7px;border-right:2px solid var(--t2);border-bottom:2px solid var(--t2);transform:translateY(-2px) rotate(45deg)}
 details.card[open]>summary .chev{transform:rotate(180deg)}
-details.card>summary:hover .chev{background:rgba(255,255,255,.14)}
+details.card>summary:hover .chev{background:rgba(var(--ink),.14)}
 details.card[open]>summary{margin-bottom:12px}
-.upd{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:14px 16px;border-radius:20px;background:rgba(255,255,255,.045);border:1px solid var(--line)}
+.upd{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:14px 16px;border-radius:20px;background:rgba(var(--ink),.045);border:1px solid var(--line)}
 .upd b{font-size:15px}
-.prog{height:6px;border-radius:99px;background:rgba(255,255,255,.08);overflow:hidden;margin-top:10px}.prog i{display:block;height:100%;width:0;background:var(--c);transition:width .4s}
+.prog{height:6px;border-radius:99px;background:rgba(var(--ink),.08);overflow:hidden;margin-top:10px}.prog i{display:block;height:100%;width:0;background:var(--c);transition:width .4s}
+.thm{flex:none;height:26px;padding:0 10px;font-size:12px;color:var(--t2)}
 .tog{display:inline-flex;align-items:center;gap:8px;font-size:13px;color:var(--t2)}
 [hidden]{display:none!important}
+/* On a phone the board name, address and signal no longer fit beside the title and the theme switch: they take their own line underneath. */
+@media(max-width:560px){.head{flex-wrap:wrap;row-gap:6px}.head b{white-space:nowrap}.thm{margin-left:auto}.head .more{order:3;flex-basis:100%;margin-left:0}}
 @media(max-width:560px){.row{grid-template-columns:76px 40px 40px 1fr auto}.row .spd{display:none}.big{font-size:40px}}
-</style></head><body><main>
+</style>
+<script>/* Set before the body draws, so a pinned theme never flashes the other one first. */try{const t=localStorage.getItem('theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t;}catch(e){}</script>
+</head><body><main>
 
 <section class="card" id="now">
-  <div class="head"><b>Panda State</b><span class="chip" id="fw">…</span><span class="more"><span id="net"></span><span class="sig" id="sig" title="Wi-Fi signal"><i></i><i></i><i></i><i></i></span></span></div>
+  <div class="head"><b>Panda State</b><span class="chip" id="fw">…</span><span class="more"><span id="net"></span><span class="sig" id="sig" title="Wi-Fi signal"><i></i><i></i><i></i><i></i></span></span><button class="thm" id="thm"></button></div>
   <div class="big" id="state">…</div>
   <div class="sub" id="said"></div>
   <div class="bar" id="bar"></div>
@@ -480,6 +488,13 @@ document.querySelectorAll('details.card').forEach(d=>{
   try{const was=localStorage.getItem(d.id);if(was!==null)d.open=was==='1';}catch(e){}
   d.addEventListener('toggle',()=>{try{localStorage.setItem(d.id,d.open?'1':'0');}catch(e){}});
 });
+/* The page theme: Auto follows the device, Light and Dark pin it for this browser only, since a phone and a desktop can want different things. */
+const THEMES=['auto','light','dark'],THEME_NAMES={auto:'Auto',light:'Light',dark:'Dark'};
+function paintTheme(){const t=document.documentElement.dataset.theme||'auto';$('thm').textContent=THEME_NAMES[t];$('thm').title='Page theme: '+(t==='auto'?'following this device':THEME_NAMES[t].toLowerCase())+'. Click to change.';}
+$('thm').onclick=()=>{const now=document.documentElement.dataset.theme||'auto',next=THEMES[(THEMES.indexOf(now)+1)%3];
+  if(next==='auto')delete document.documentElement.dataset.theme;else document.documentElement.dataset.theme=next;
+  try{if(next==='auto')localStorage.removeItem('theme');else localStorage.setItem('theme',next);}catch(e){}paintTheme();};
+paintTheme();
 tick(); setInterval(tick,1000);
 /* The live picture: its own small request five times a second, each LED fading to the next reading (CSS transition) so effects move smoothly instead of jumping once a second. One request at a time, so a slow bar is never queued up. */
 let framing=false;
