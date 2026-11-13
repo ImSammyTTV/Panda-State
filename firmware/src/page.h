@@ -8,6 +8,7 @@
 static const char PAGE[] PROGMEM = R"HTML(<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Panda Status</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%230b0e14'/%3E%3Crect x='6' y='23' width='52' height='18' rx='9' fill='%23171c26' stroke='%23ffffff' stroke-opacity='.14' stroke-width='1.5'/%3E%3Crect x='9' y='28' width='7.6' height='8' rx='2.5' fill='%23ff6a00'/%3E%3Crect x='18.6' y='28' width='7.6' height='8' rx='2.5' fill='%23ffd60a'/%3E%3Crect x='28.2' y='28' width='7.6' height='8' rx='2.5' fill='%2334c759'/%3E%3Crect x='37.8' y='28' width='7.6' height='8' rx='2.5' fill='%2300a8ff'/%3E%3Crect x='47.4' y='28' width='7.6' height='8' rx='2.5' fill='%23bf5af2'/%3E%3C/svg%3E">
 <style>
 :root{--bg:#07090e;--card:#0f131b;--line:rgba(255,255,255,.08);--text:#eef1f6;--t2:#aab2c0;--t3:#6f7888;--c:#009dff}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:15px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
@@ -49,7 +50,17 @@ button:hover{background:rgba(255,255,255,.17)}button.go{background:var(--text);c
 .empty{padding:16px;border-radius:18px;border:1px dashed var(--line);color:var(--t3);font-size:13px}
 .sw{display:grid;grid-template-columns:repeat(25,1fr);gap:2px;height:10px;margin:2px 0}.sw i{border-radius:2px;background:#222}
 .panel{margin-top:14px;padding:14px;border-radius:22px;background:rgba(0,0,0,.18);border:1px solid var(--line)}
-details{margin-top:14px;border-top:1px solid var(--line);padding-top:12px}summary{cursor:pointer;color:var(--t2);font-size:13px}
+details.byo{margin-top:14px;border-top:1px solid var(--line);padding-top:12px}details.byo summary{cursor:pointer;color:var(--t2);font-size:13px}
+/* Sections that fold: the header is the whole click target and carries a one-line summary, so a closed section still says how things are. */
+details.card>summary{list-style:none;display:flex;align-items:center;gap:12px;cursor:pointer;margin:-4px 0;padding:4px 0}
+details.card>summary::-webkit-details-marker{display:none}
+details.card>summary h2{margin:0;flex:none}
+details.card>summary .sum{flex:1;min-width:0;font-size:13px;color:var(--t2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+details.card>summary .chev{flex:none;width:28px;height:28px;border-radius:50%;display:grid;place-items:center;background:rgba(255,255,255,.07);transition:transform .2s}
+details.card>summary .chev::before{content:'';width:7px;height:7px;border-right:2px solid var(--t2);border-bottom:2px solid var(--t2);transform:translateY(-2px) rotate(45deg)}
+details.card[open]>summary .chev{transform:rotate(180deg)}
+details.card>summary:hover .chev{background:rgba(255,255,255,.14)}
+details.card[open]>summary{margin-bottom:12px}
 .upd{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:14px 16px;border-radius:20px;background:rgba(255,255,255,.045);border:1px solid var(--line)}
 .upd b{font-size:15px}
 .prog{height:6px;border-radius:99px;background:rgba(255,255,255,.08);overflow:hidden;margin-top:10px}.prog i{display:block;height:100%;width:0;background:var(--c);transition:width .4s}
@@ -80,12 +91,12 @@ details{margin-top:14px;border-top:1px solid var(--line);padding-top:12px}summar
   <div class="msg" id="cfgmsg"></div>
 </section>
 
-<section class="card">
-  <h2>Schedule</h2>
+<details class="card" id="fold-sched">
+  <summary><h2>Schedule</h2><span class="sum" id="schedsum"></span><i class="chev"></i></summary>
   <div class="line"><button id="schon"></button><label for="schfrom">Dark from</label><input id="schfrom" type="time" style="width:120px"><label for="schto">back on at</label><input id="schto" type="time" style="width:120px"><label for="schlvl">at brightness</label><input id="schlvl" type="text" inputmode="numeric" style="width:56px"><label>%</label><button id="schsave">Save</button></div>
   <div class="line"><label for="zone">Time zone</label><select id="zone" style="width:230px"></select><span class="sub" id="clock"></span></div>
   <div class="msg" id="schmsg"></div>
-</section>
+</details>
 
 <section class="card">
   <div class="head2"><h2>Add-ons</h2><span class="sp"><button id="adup">Upload</button><input id="adfile" type="file" accept=".json,application/json" hidden></span></div>
@@ -97,23 +108,23 @@ details{margin-top:14px;border-top:1px solid var(--line);padding-top:12px}summar
     <div class="store" id="storelist"></div>
   </div>
   <div class="msg" id="admsg"></div>
-  <details><summary>Build your own</summary>
+  <details class="byo"><summary>Build your own</summary>
     <div class="sub" style="margin-top:10px">An add-on <b>file</b> is a few lines of JSON the bar runs itself: a look, meters, an animation, or a live meter read from a web address. Upload one here, or add yours to the store's folder on GitHub (<a href="https://github.com/ImSammyTTV/panda-status-p2-firmware/tree/main/addons/store" target="_blank" rel="noopener">format and examples</a>).</div>
     <div class="sub" style="margin-top:10px">An add-on <b>program</b> runs anywhere on your network and posts to <code>/api/addon</code>, again and again. Every call is listed at <a href="/api">/api</a>. A meter at 63%:<br><code>curl -X POST http://<span id="myip"></span>/api/addon -H "content-type: application/json" -d '{"id":"demo","name":"Demo","meters":[{"value":63,"colour":"#D97757"}]}'</code></div>
   </details>
 </section>
 
-<section class="card">
-  <h2>Printer</h2>
+<details class="card" id="fold-printer">
+  <summary><h2>Printer</h2><span class="sum" id="prsum"></span><i class="chev"></i></summary>
   <div class="sub" id="prstate"></div>
   <div class="line"><input class="grow" id="prip" type="text" placeholder="Printer address, e.g. 192.168.1.50" autocomplete="off"><input class="grow" id="prsn" type="text" placeholder="Serial number" autocomplete="off"><input class="grow" id="prcode" type="password" placeholder="Access code" autocomplete="off"></div>
   <div class="line"><button class="go" id="pair">Pair</button><button id="unpair">Unpair</button><span class="sub">On the printer: Settings, then LAN Only or Network, shows the address and the access code.</span></div>
   <div class="line"><label for="cmin">After a print, cooling for</label><input id="cmin" type="text" inputmode="numeric" style="width:64px"><label for="cbed">minutes and until the bed is at</label><input id="cbed" type="text" inputmode="numeric" style="width:64px"><label>&deg;C</label><button id="coolsave">Save</button></div>
   <div class="msg" id="prmsg"></div>
-</section>
+</details>
 
-<section class="card">
-  <h2>Wi-Fi</h2>
+<details class="card" id="fold-wifi">
+  <summary><h2>Wi-Fi</h2><span class="sum" id="wifisum"></span><i class="chev"></i></summary>
   <div class="upd"><div class="grow"><b id="wifititle">…</b><div class="sub" id="wifisub"></div></div><button id="scan">Scan</button></div>
   <div class="line"><input class="grow" id="ssid" type="text" list="nets" placeholder="Network name" autocomplete="off"><datalist id="nets"></datalist><input class="grow" id="pass" type="password" placeholder="Password" autocomplete="off"><button class="go" id="wifi">Save and join</button></div>
   <div class="msg" id="wifimsg"></div>
@@ -122,10 +133,10 @@ details{margin-top:14px;border-top:1px solid var(--line);padding-top:12px}summar
   <div class="line"><label for="apmode">Hotspot</label><select id="apmode" style="width:300px"><option value="fallback">On only when Wi-Fi does not connect</option><option value="always">Always on</option></select></div>
   <div class="line"><input class="grow" id="apssid" type="text" placeholder="Hotspot name" autocomplete="off"><input class="grow" id="appass" type="password" placeholder="New password (8+ characters), or leave empty" autocomplete="new-password"><button id="apsave">Save</button></div>
   <div class="msg" id="apmsg"></div>
-</section>
+</details>
 
-<section class="card">
-  <h2>Firmware</h2>
+<details class="card" id="fold-fw">
+  <summary><h2>Firmware</h2><span class="sum" id="fwsum"></span><i class="chev"></i></summary>
   <div class="upd">
     <div class="grow"><b id="updtitle">…</b><div class="sub" id="updsub"></div></div>
     <button id="updcheck">Check for updates</button><button class="go" id="updinstall" hidden>Install</button>
@@ -136,7 +147,7 @@ details{margin-top:14px;border-top:1px solid var(--line);padding-top:12px}summar
   <div class="line"><input class="grow" id="bin" type="file" accept=".bin"><button id="up">Install file</button></div>
   <div class="line"><button id="other">Start the firmware in the other slot</button><button id="reboot">Restart</button><button id="factory">Reset settings</button></div>
   <div class="msg" id="fwmsg"></div>
-</section>
+</details>
 
 </main><script>
 const $=(id)=>document.getElementById(id);
@@ -198,14 +209,15 @@ function renderAddons(s){
       sub:[f.kind!=='none'?f.kind:'',f.value!==undefined?'reads '+(+f.value).toPrecision(4):'',f.author?'by '+f.author:''].filter(Boolean).join(' · '),live:posted&&posted.fresh,bad:!!f.error,file:true});
   }
   for(const a of s.addons){if(f.from&&a.id===f.id)continue;tiles.push({id:a.id,name:a.name,tag:'program',sub:a.kind+' · '+(a.fresh?'posted '+a.age+' s ago':'stopped posting'),live:a.fresh});}
-  if(want&&!tiles.some(t=>t.id===want))tiles.push({id:want,name:want,desc:'Picked, but not posting just now',tag:'program',live:false});
+  /* Picked but nothing is running it: replaced by another add-on file, or a program that stopped. Said plainly, with a way out. */
+  if(want&&!tiles.some(t=>t.id===want))tiles.push({id:want,name:want,desc:'Picked, but nothing is running it now: it was replaced, or the program that posted it has stopped. Use it again from the store, or clear it.',tag:'not running',bad:true,missing:true});
   const html=tiles.length?tiles.map(t=>'<div class="tile"'+(t.id&&t.id===want?' data-on':'')+'><div class="t"><i class="dot"'+(t.live?' data-live':'')+(t.bad?' data-bad':'')+'></i><span>'+esc(t.name)+'</span><em class="tag">'+t.tag+'</em></div>'
     +(t.desc?'<div class="d">'+esc(t.desc)+'</div>':'')+'<div class="sub">'+esc(t.sub||'')+(s.addonShowing&&s.addonShowing===t.id?' · on the bar now':'')+'</div>'
-    +'<div class="acts">'+(t.id?(t.id===want?'<button class="go" disabled>Picked</button>':'<button data-pick="'+esc(t.id)+'">Show this</button>'):'')+(t.file?'<button data-remove="1">Remove</button>':'')+'</div></div>').join('')
+    +'<div class="acts">'+(t.missing?'<button data-pick="">Clear</button>':t.id?(t.id===want?'<button class="go" disabled>Picked</button>':'<button data-pick="'+esc(t.id)+'">Show this</button>'):'')+(t.file?'<button data-remove="1">Remove</button>':'')+'</div></div>').join('')
     :'<div class="empty">No add-ons yet. Open the store, upload a file, or have a program post to <code>/api/addon</code>.</div>';
   if(html!==window.adHtml){window.adHtml=html;$('adtiles').innerHTML=html;}
 }
-$('adtiles').onclick=async(e)=>{const b=e.target.closest('button');if(!b)return;if(b.dataset.pick)pick(b.dataset.pick);
+$('adtiles').onclick=async(e)=>{const b=e.target.closest('button');if(!b)return;if(b.dataset.pick!==undefined)pick(b.dataset.pick);
   if(b.dataset.remove){if(!confirm('Remove this add-on from the bar?'))return;const r=await post('/api/addonfile',{remove:true});$('admsg').textContent=r.message||'';}};
 $('adnone').onclick=()=>pick('');
 $('adup').onclick=()=>$('adfile').click();
@@ -326,6 +338,17 @@ async function tick(){
   const o=s.otherSlot;
   $('slots').textContent='Running from '+s.slot+' ('+s.build+')'+(s.onTrial?' · on trial until it has been on Wi-Fi for 20 s':'')+'. Other slot ('+o.label+'): '+(o.project?o.project+' '+o.version+', built '+o.built:'empty')+'.';
   $('other').disabled=!o.project;
+  /* What a closed section says about itself. */
+  const sc=s.config.schedule;
+  $('schedsum').textContent=sc.enabled?'Dark '+sc.from+' to '+sc.to+(s.clock.dark?' · dark now':''):'Off';
+  $('prsum').textContent=$('prstate').textContent;
+  $('wifisum').textContent=$('wifititle').textContent+(s.ap.up?' · hotspot on':'');
+  $('fwsum').textContent=$('updtitle').textContent;
 }
+/* Which sections are open, remembered by this browser. */
+document.querySelectorAll('details.card').forEach(d=>{
+  try{if(localStorage.getItem(d.id)==='1')d.open=true;}catch(e){}
+  d.addEventListener('toggle',()=>{try{localStorage.setItem(d.id,d.open?'1':'0');}catch(e){}});
+});
 tick(); setInterval(tick,1000);
 </script></body></html>)HTML";

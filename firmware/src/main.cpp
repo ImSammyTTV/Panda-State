@@ -44,7 +44,7 @@
 
 /* What the firmware calls itself on its page and in /api/status. Plain and generic, so it says what it is on anyone's network. */
 #define FW_NAME "panda"
-#define FW_VERSION "0.6.1"
+#define FW_VERSION "0.6.2"
 /* Where new releases and the add-on store live. A release must carry a
    panda-p2-custom-<version>.bin and a SHA256SUMS.txt that lists it. */
 #define UPDATE_REPO "ImSammyTTV/panda-status-p2-firmware"
@@ -1034,7 +1034,29 @@ static void paintEffect(uint8_t effect, uint32_t colour, uint32_t colour2, uint8
   }
 }
 
+/* 0-100 while new firmware is being written, -1 otherwise. While it is set the bar shows nothing but the progress: blue filling from LED 0, with a soft highlight running through the lit part so a slow download still looks alive. Never fully dark, even inside the schedule's dark spell: an update is exactly when the owner wants to see the bar. */
+static volatile int8_t barProgress = -1;
+static const uint32_t PROGRESS_COLOUR = 0x3B82F6;
+
+static void renderProgress() {
+  const float lit = barProgress / 100.0f * LED_COUNT;
+  const float level = max((schedActive() ? schedLevel : brightness) / 100.0f, 0.5f);
+  const float head = fmodf(millis() / 1000.0f * 10.0f, LED_COUNT + 6.0f) - 3.0f;
+  for (int i = 0; i < LED_COUNT; i++) {
+    float v = lit - i >= 1 ? 0.75f : lit - i > 0 ? max(lit - i, 0.2f) * 0.75f : 0.12f;
+    if (i < lit) v += 0.25f * max(0.0f, 1 - fabsf(i - head) / 3.0f);
+    const float scale = v * v * level;
+    const uint8_t r = ((PROGRESS_COLOUR >> 16) & 255) * scale, g = ((PROGRESS_COLOUR >> 8) & 255) * scale, b = (PROGRESS_COLOUR & 255) * scale;
+    frame[i][0] = r; frame[i][1] = g; frame[i][2] = b;
+    uint8_t wire[3];
+    for (int c = 0; c < 3; c++) wire[c] = order[c] == 'R' ? r : order[c] == 'G' ? g : b;
+    strip.setPixelColor(reversed ? LED_COUNT - 1 - i : i, wire[0], wire[1], wire[2]);
+  }
+  strip.show();
+}
+
 static void render() {
+  if (barProgress >= 0) return renderProgress();
   float fill;
   Source source;
   const State state = shown(fill, source);
@@ -1745,15 +1767,23 @@ static void handleUpdateDone() {
 
 static void handleUpdateChunk() {
   HTTPUpload &upload = server.upload();
+  /* The whole upload arrives inside this one handler, so the loop that draws the LEDs does not run meanwhile: the progress is drawn from here. The request's size includes the form around the file, close enough for a progress bar. */
+  static uint32_t drawnAt = 0;
+  const size_t whole = server.clientContentLength();
   if (upload.status == UPLOAD_FILE_START) {
+    barProgress = 0;
     Update.begin(UPDATE_SIZE_UNKNOWN);
   } else if (upload.status == UPLOAD_FILE_WRITE) {
     if (!Update.hasError()) Update.write(upload.buf, upload.currentSize);
+    if (whole) barProgress = (int8_t)min<uint64_t>(99, (uint64_t)upload.totalSize * 100 / whole);
   } else if (upload.status == UPLOAD_FILE_END) {
     Update.end(true);
+    barProgress = Update.hasError() ? -1 : 100;
   } else if (upload.status == UPLOAD_FILE_ABORTED) {
     Update.abort();
+    barProgress = -1;
   }
+  if (barProgress >= 0 && millis() - drawnAt > 150) { drawnAt = millis(); renderProgress(); }
 }
 
 /* ---------------------------------------------------------- online -- */
@@ -1770,21 +1800,38 @@ static void handleUpdateChunk() {
  * the release's SHA256SUMS.txt before it is allowed to boot.
  */
 
-/* An HTTP(S) GET that follows redirects (GitHub's downloads always redirect). */
+/**
+ * An HTTP(S) GET that follows redirects. GitHub's downloads always redirect,
+ * from github.com to a different file server. The Arduino client's own
+ * redirect handling reuses the first connection for the second host, and
+ * measured on 0.6.0 that failed every time ("could not connect") while both
+ * hosts worked when asked directly; so each hop here is a fresh connection.
+ */
 struct Fetch {
   WiFiClientSecure tls;
   WiFiClient plain;
   HTTPClient http;
-  int begin(const String &url, uint32_t timeoutMs = 15000) {
-    const bool secure = url.startsWith("https://");
-    if (secure) { tls.setCACert(ROOT_CAS); tls.setHandshakeTimeout(12); }
-    http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
-    http.setRedirectLimit(5);
-    http.setTimeout(timeoutMs);
-    http.setUserAgent("panda-p2-firmware/" FW_VERSION);
-    if (!(secure ? http.begin(tls, url) : http.begin(plain, url))) return -1;
-    http.addHeader("Accept", "application/json, */*");
-    return http.GET();
+  int begin(String url, uint32_t timeoutMs = 15000) {
+    static const char *keep[] = {"Location"};
+    for (int hop = 0; hop < 5; hop++) {
+      http.end();
+      tls.stop();
+      plain.stop();
+      const bool secure = url.startsWith("https://");
+      if (secure) { tls.setCACert(ROOT_CAS); tls.setHandshakeTimeout(12); }
+      http.setFollowRedirects(HTTPC_DISABLE_FOLLOW_REDIRECTS);
+      http.setTimeout(timeoutMs);
+      http.setUserAgent("panda-p2-firmware/" FW_VERSION);
+      if (!(secure ? http.begin(tls, url) : http.begin(plain, url))) return -1;
+      http.addHeader("Accept", "application/json, */*");
+      http.collectHeaders(keep, 1);
+      const int code = http.GET();
+      if (code != 301 && code != 302 && code != 303 && code != 307 && code != 308) return code;
+      const String next = http.header("Location");
+      if (!next.length()) return code;
+      url = next;
+    }
+    return -1;
   }
   ~Fetch() { http.end(); }
 };
@@ -1843,6 +1890,7 @@ static bool updCheck() {
 }
 
 static bool updFail(const String &why) {
+  barProgress = -1;
   updMessage = why;
   updPhase = UPD_FAILED;
   prPaused = false;
@@ -1871,6 +1919,7 @@ static bool updInstall() {
 
   updPhase = UPD_DOWNLOADING;
   updPercent = 0;
+  barProgress = 0;
   prPaused = true;
   prRestart = true;
   vTaskDelay(pdMS_TO_TICKS(1500));   // let the printer link close and give its memory back
@@ -1903,6 +1952,7 @@ static bool updInstall() {
     if (Update.write(buf, n) != (size_t)n) { Update.abort(); mbedtls_sha256_free(&sha); return updFail(String("Writing failed: ") + Update.errorString()); }
     written += n;
     updPercent = (uint8_t)((int64_t)written * 100 / total);
+    barProgress = updPercent;
   }
   uint8_t digest[32];
   mbedtls_sha256_finish_ret(&sha, digest);
@@ -1915,6 +1965,7 @@ static bool updInstall() {
   if (!Update.end()) return updFail(String("Could not finish: ") + Update.errorString());
   updMessage = String("Installed ") + updLatest + ". Restarting into it.";
   updPhase = UPD_DONE;
+  barProgress = 100;
   vTaskDelay(pdMS_TO_TICKS(1500));
   ESP.restart();
   return true;
@@ -2319,8 +2370,8 @@ void setup() {
 void loop() {
   server.handleClient();
   static uint32_t lastFrameAt = 0;
-  /* Not while an update is being written: the LED signal is bit-timed and the two fight over the same core. */
-  if (!Update.isRunning() && millis() - lastFrameAt >= 25) {
+  /* Slower while an update is being written: the LED signal is bit-timed and shares the core with the flash writes, so a frame now and then may come out wrong. At this rate that is a flicker on a progress bar, nothing worse. */
+  if (millis() - lastFrameAt >= (Update.isRunning() ? 150u : 25u)) {
     lastFrameAt = millis();
     render();
   }
