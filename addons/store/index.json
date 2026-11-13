@@ -2,6 +2,59 @@
     "version":  1,
     "addons":  [
                    {
+                       "file":  "weather-temperature.json",
+                       "name":  "Temperature",
+                       "description":  "The temperature outside now, as a meter from -5 C (empty) to 40 C (full). Updated every 15 minutes. Weather data by Open-Meteo.com (CC BY 4.0).",
+                       "author":  "panda-status-p2-firmware",
+                       "kind":  "live meter",
+                       "preview":  "F97316F97316F97316F97316F97316F97316F97316F97316F97316F97316F97316F97316111418111418111418111418111418111418111418111418111418111418111418111418111418",
+                       "needs":  "place"
+                   },
+                   {
+                       "file":  "weather-rain-chance.json",
+                       "name":  "Rain chance",
+                       "description":  "The chance of rain in the coming hour, 0 to 100%. Glance before the washing goes out. Updated every 15 minutes. Weather data by Open-Meteo.com (CC BY 4.0).",
+                       "author":  "panda-status-p2-firmware",
+                       "kind":  "live meter",
+                       "preview":  "3B82F63B82F63B82F63B82F63B82F63B82F63B82F63B82F6111418111418111418111418111418111418111418111418111418111418111418111418111418111418111418111418111418",
+                       "needs":  "place"
+                   },
+                   {
+                       "file":  "weather-uv.json",
+                       "name":  "UV index",
+                       "description":  "The UV index now, from 0 to 11+ (full is extreme). Past half way is time for sunscreen. Updated every 15 minutes. Weather data by Open-Meteo.com (CC BY 4.0).",
+                       "author":  "panda-status-p2-firmware",
+                       "kind":  "live meter",
+                       "preview":  "A855F7A855F7A855F7A855F7A855F7A855F7A855F7A855F7A855F7A855F7A855F7A855F7A855F7A855F7A855F7111418111418111418111418111418111418111418111418111418111418",
+                       "needs":  "place"
+                   },
+                   {
+                       "file":  "weather-wind.json",
+                       "name":  "Wind",
+                       "description":  "The wind speed now, 0 to 60 km/h. Updated every 15 minutes. Weather data by Open-Meteo.com (CC BY 4.0).",
+                       "author":  "panda-status-p2-firmware",
+                       "kind":  "live meter",
+                       "preview":  "94A3B894A3B894A3B894A3B894A3B894A3B894A3B894A3B894A3B8111418111418111418111418111418111418111418111418111418111418111418111418111418111418111418111418",
+                       "needs":  "place"
+                   },
+                   {
+                       "file":  "air-quality.json",
+                       "name":  "Air quality",
+                       "description":  "The European air quality index outside: under 20 is good, 50 is poor, full (100) is extremely poor. Worth a look before opening the windows to air out the printer. Updated every 30 minutes. Air quality data by Open-Meteo.com (CC BY 4.0).",
+                       "author":  "panda-status-p2-firmware",
+                       "kind":  "live meter",
+                       "preview":  "22C55E22C55E22C55E22C55E22C55E22C55E111418111418111418111418111418111418111418111418111418111418111418111418111418111418111418111418111418111418111418",
+                       "needs":  "place"
+                   },
+                   {
+                       "file":  "ethereum-24h.json",
+                       "name":  "Ethereum, last 24 hours",
+                       "description":  "The change in the price of ether over the last day: half way is no change, full is up 10% or more, empty is down 10% or more. From CoinGecko, every 5 minutes.",
+                       "author":  "panda-status-p2-firmware",
+                       "kind":  "live meter",
+                       "preview":  "8B5CF68B5CF68B5CF68B5CF68B5CF68B5CF68B5CF68B5CF68B5CF68B5CF68B5CF6111418111418111418111418111418111418111418111418111418111418111418111418111418111418"
+                   },
+                   {
                        "file":  "aurora.json",
                        "name":  "Aurora",
                        "description":  "Greens and violets drifting slowly along the bar, like the northern lights.",

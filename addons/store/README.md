@@ -50,12 +50,21 @@ the JSON answer by `path`, and shows it as a meter from `min` (empty) to `max`
 - The answer must be under 32 KB, and no sign-in or API key is possible, so use
   public, key-free addresses.
 
+### Add-ons for a place
+
+Weather and air quality depend on where the bar is. In a store add-on, write
+`{lat}`, `{lon}` and `{place}` where the latitude, longitude and town's name
+belong, and give its `index.json` entry `"needs": "place"`. The bar's page then
+shows **Use for my town**: it asks for the town, finds it with Open-Meteo's
+free place search, and gives the bar a copy with the place filled in.
+
 ## Adding one to the store
 
 1. Add your `.json` file to this folder.
 2. Add an entry for it to `index.json`: `file`, `name`, `description`,
-   `author`, `kind` (`look`, `animation` or `live meter`) and `preview`, which
-   is 25 colours as 150 hex digits for the little strip on the store card.
+   `author`, `kind` (`look`, `animation` or `live meter`), `preview` (25
+   colours as 150 hex digits for the little strip on the store card) and, for
+   an add-on that needs a location, `"needs": "place"`.
 3. Open a pull request.
 
 Add-ons run on the bar itself, so keep them small and kind to the services they

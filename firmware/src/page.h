@@ -21,7 +21,7 @@ background:linear-gradient(160deg,color-mix(in srgb,var(--c) 18%,#0c1018),#0a0d1
 .big{font-size:54px;font-weight:250;letter-spacing:-.04em;margin:18px 0 2px;text-transform:capitalize}
 .sub{font-size:13px;color:var(--t3)}
 .bar{display:grid;grid-template-columns:repeat(25,1fr);gap:4px;margin-top:20px;padding:12px;border-radius:20px;background:rgba(255,255,255,.05);border:1px solid var(--line)}
-.bar i{height:22px;border-radius:6px;background:#111}
+.bar i{height:22px;border-radius:6px;background:#111;transition:background-color .2s linear}
 h2{font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--t3);margin:0 0 12px;font-weight:600}
 .row{display:grid;grid-template-columns:88px 44px 44px minmax(0,1fr) minmax(0,1fr) auto;gap:10px;align-items:center;padding:8px 0;border-top:1px solid var(--line)}
 .row:first-of-type{border-top:0}.row span{text-transform:capitalize}
@@ -47,7 +47,7 @@ button:hover{background:rgba(255,255,255,.17)}button.go{background:var(--text);c
 .tile .acts{display:flex;gap:6px;margin-top:auto;padding-top:4px}.tile button{height:30px;font-size:12.5px}
 .dot{flex:none;width:8px;height:8px;border-radius:50%;background:#64748b}.dot[data-live]{background:#22c55e;box-shadow:0 0 0 3px rgba(34,197,94,.18)}.dot[data-bad]{background:#f59e0b}
 .tag{margin-left:auto;flex:none;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:600;color:var(--t2);background:rgba(255,255,255,.07)}
-.empty{padding:16px;border-radius:18px;border:1px dashed var(--line);color:var(--t3);font-size:13px}
+.empty{grid-column:1/-1;padding:16px;border-radius:18px;border:1px dashed var(--line);color:var(--t3);font-size:13px}
 .sw{display:grid;grid-template-columns:repeat(25,1fr);gap:2px;height:10px;margin:2px 0}.sw i{border-radius:2px;background:#222}
 .panel{margin-top:14px;padding:14px;border-radius:22px;background:rgba(0,0,0,.18);border:1px solid var(--line)}
 details.byo{margin-top:14px;border-top:1px solid var(--line);padding-top:12px}details.byo summary{cursor:pointer;color:var(--t2);font-size:13px}
@@ -81,15 +81,31 @@ details.card[open]>summary{margin-bottom:12px}
   <div class="sub" style="margin-top:10px">Button on the bar: press once for the next Music sensitivity, twice to switch mode, hold five seconds for the setup Wi-Fi network.</div>
 </section>
 
-<section class="card">
-  <h2>What each state looks like</h2>
+<details class="card" id="fold-looks">
+  <summary><h2>What each state looks like</h2><span class="sum" id="lookssum"></span><i class="chev"></i></summary>
   <div id="rows"></div>
   <div class="line">
     <label for="order">Colour order</label><select id="order" style="width:90px"></select>
     <label><input type="checkbox" id="rev"> Run the other way along the bar</label>
   </div>
   <div class="msg" id="cfgmsg"></div>
-</section>
+</details>
+
+<details class="card" id="fold-addons" open>
+  <summary><h2>Add-ons</h2><span class="sum" id="adsum"></span><i class="chev"></i></summary>
+  <div class="sub">Show something else on the bar when the printer has nothing to say.</div>
+  <div class="tiles" id="adtiles"></div>
+  <div class="line"><label for="adwhen">Show it</label><select id="adwhen" style="width:auto;max-width:100%"><option value="idle">while the printer is not busy with a print</option><option value="always">always, even while printing</option></select><button id="adnone" hidden>Show nothing</button><span class="grow"></span><button id="adup">Upload a file</button><input id="adfile" type="file" accept=".json,application/json" hidden></div>
+  <div class="msg" id="admsg"></div>
+  <div class="panel" id="storepanel">
+    <div class="head2" style="margin:0"><h2>Store</h2><span class="sp"><span class="sub" id="storenote"></span></span></div>
+    <div class="store" id="storelist"></div>
+  </div>
+  <details class="byo"><summary>Build your own</summary>
+    <div class="sub" style="margin-top:10px">An add-on <b>file</b> is a few lines of JSON the bar runs itself: a look, meters, an animation, or a live meter read from a web address. Upload one here, or add yours to the store's folder on GitHub (<a href="https://github.com/ImSammyTTV/panda-status-p2-firmware/tree/main/addons/store" target="_blank" rel="noopener">format and examples</a>).</div>
+    <div class="sub" style="margin-top:10px">An add-on <b>program</b> runs anywhere on your network and posts to <code>/api/addon</code>, again and again. Every call is listed at <a href="/api">/api</a>. A meter at 63%:<br><code>curl -X POST http://<span id="myip"></span>/api/addon -H "content-type: application/json" -d '{"id":"demo","name":"Demo","meters":[{"value":63,"colour":"#D97757"}]}'</code></div>
+  </details>
+</details>
 
 <details class="card" id="fold-sched">
   <summary><h2>Schedule</h2><span class="sum" id="schedsum"></span><i class="chev"></i></summary>
@@ -97,22 +113,6 @@ details.card[open]>summary{margin-bottom:12px}
   <div class="line"><label for="zone">Time zone</label><select id="zone" style="width:230px"></select><span class="sub" id="clock"></span></div>
   <div class="msg" id="schmsg"></div>
 </details>
-
-<section class="card">
-  <div class="head2"><h2>Add-ons</h2><span class="sp"><button id="adup">Upload</button><input id="adfile" type="file" accept=".json,application/json" hidden></span></div>
-  <div class="sub">Show something else on the bar when the printer has nothing to say: an add-on from the store, a file of your own, or any program on your network.</div>
-  <div class="tiles" id="adtiles"></div>
-  <div class="line"><label for="adwhen">Show the picked one</label><select id="adwhen" style="width:auto;max-width:100%"><option value="idle">while the printer is not busy with a print</option><option value="always">always, even while printing</option></select><button id="adnone">Show nothing</button></div>
-  <div class="panel" id="storepanel">
-    <div class="head2" style="margin:0"><h2>Store</h2><span class="sp"><span class="sub" id="storenote"></span></span></div>
-    <div class="store" id="storelist"></div>
-  </div>
-  <div class="msg" id="admsg"></div>
-  <details class="byo"><summary>Build your own</summary>
-    <div class="sub" style="margin-top:10px">An add-on <b>file</b> is a few lines of JSON the bar runs itself: a look, meters, an animation, or a live meter read from a web address. Upload one here, or add yours to the store's folder on GitHub (<a href="https://github.com/ImSammyTTV/panda-status-p2-firmware/tree/main/addons/store" target="_blank" rel="noopener">format and examples</a>).</div>
-    <div class="sub" style="margin-top:10px">An add-on <b>program</b> runs anywhere on your network and posts to <code>/api/addon</code>, again and again. Every call is listed at <a href="/api">/api</a>. A meter at 63%:<br><code>curl -X POST http://<span id="myip"></span>/api/addon -H "content-type: application/json" -d '{"id":"demo","name":"Demo","meters":[{"value":63,"colour":"#D97757"}]}'</code></div>
-  </details>
-</section>
 
 <details class="card" id="fold-printer">
   <summary><h2>Printer</h2><span class="sum" id="prsum"></span><i class="chev"></i></summary>
@@ -214,8 +214,11 @@ function renderAddons(s){
   const html=tiles.length?tiles.map(t=>'<div class="tile"'+(t.id&&t.id===want?' data-on':'')+'><div class="t"><i class="dot"'+(t.live?' data-live':'')+(t.bad?' data-bad':'')+'></i><span>'+esc(t.name)+'</span><em class="tag">'+t.tag+'</em></div>'
     +(t.desc?'<div class="d">'+esc(t.desc)+'</div>':'')+'<div class="sub">'+esc(t.sub||'')+(s.addonShowing&&s.addonShowing===t.id?' · on the bar now':'')+'</div>'
     +'<div class="acts">'+(t.missing?'<button data-pick="">Clear</button>':t.id?(t.id===want?'<button class="go" disabled>Picked</button>':'<button data-pick="'+esc(t.id)+'">Show this</button>'):'')+(t.file?'<button data-remove="1">Remove</button>':'')+'</div></div>').join('')
-    :'<div class="empty">No add-ons yet. Open the store, upload a file, or have a program post to <code>/api/addon</code>.</div>';
+    :'<div class="empty">Nothing yet. Pick one from the store below, or upload a file of your own.</div>';
   if(html!==window.adHtml){window.adHtml=html;$('adtiles').innerHTML=html;}
+  $('adnone').hidden=!want;
+  const on=tiles.find(t=>t.id&&t.id===want);
+  $('adsum').textContent=on?on.name+(s.addonShowing===on.id?' · on the bar now':''):'None picked';
 }
 $('adtiles').onclick=async(e)=>{const b=e.target.closest('button');if(!b)return;if(b.dataset.pick!==undefined)pick(b.dataset.pick);
   if(b.dataset.remove){if(!confirm('Remove this add-on from the bar?'))return;const r=await post('/api/addonfile',{remove:true});$('admsg').textContent=r.message||'';}};
@@ -234,10 +237,25 @@ async function openStore(){
     return '<div class="tile"'+(using?' data-on':'')+'><div class="t"><span>'+esc(a.name)+'</span><em class="tag">'+esc(a.kind)+'</em></div>'
       +(cols.length===25?'<div class="sw">'+cols.map(c=>'<i style="background:#'+c+'"></i>').join('')+'</div>':'')
       +'<div class="d">'+esc(a.description)+'</div><div class="sub">'+(a.author?'by '+esc(a.author):'')+'</div>'
-      +'<div class="acts">'+(using?'<button class="go" disabled>In use</button>':'<button data-url="'+esc(url)+'">Use this</button>')+'</div></div>';}).join('');
+      +'<div class="acts">'+(using?'<button class="go" disabled>In use</button>':'<button data-url="'+esc(url)+'"'+(a.needs?' data-needs="'+esc(a.needs)+'"':'')+'>'+(a.needs==='place'?'Use for my town':'Use this')+'</button>')+'</div></div>';}).join('');
 }
 openStore();
-$('storelist').onclick=async(e)=>{const b=e.target.closest('button');if(!b||!b.dataset.url)return;b.disabled=true;b.textContent='Adding…';
+$('storelist').onclick=async(e)=>{const b=e.target.closest('button');if(!b||!b.dataset.url)return;
+  /* An add-on for a place (weather, air): this page asks for the town, finds it with Open-Meteo's free place search, and hands the bar a copy with the place filled in. Only the coordinates go to the bar; nothing is looked up from the bar's own address. */
+  if(b.dataset.needs==='place'){
+    const town=prompt('Which town or suburb is the bar in?');if(!town)return;
+    b.disabled=true;b.textContent='Finding it…';
+    try{
+      const g=await fetch('https://geocoding-api.open-meteo.com/v1/search?count=1&name='+encodeURIComponent(town.trim())).then(r=>r.json());
+      const at=g.results&&g.results[0];if(!at)throw new Error('Could not find "'+town+'"');
+      let text=await fetch(b.dataset.url,{cache:'no-store'}).then(r=>r.text());
+      text=text.split('{lat}').join(at.latitude.toFixed(3)).split('{lon}').join(at.longitude.toFixed(3)).split('{place}').join(at.name.replace(/"/g,''));
+      const r=await post('/api/addonfile',{file:JSON.parse(text)});
+      $('admsg').textContent=r.ok?'Added for '+at.name+(at.admin1?', '+at.admin1:'')+(at.country?', '+at.country:'')+'.':(r.message||'Not accepted');
+    }catch(err){$('admsg').textContent=err.message||'That did not work';}
+    setTimeout(openStore,2000);return;
+  }
+  b.disabled=true;b.textContent='Adding…';
   const r=await post('/api/addonfile',{url:b.dataset.url});$('admsg').textContent=r.ok?'Added. The bar is fetching it from GitHub.':(r.message||'Not accepted');setTimeout(openStore,3000);};
 function renderUpdate(s){
   const u=s.update,v=(t)=>String(t).replace(/^v/,'');
@@ -309,7 +327,7 @@ async function tick(){
   let s; try{s=await fetch('/api/status').then(r=>r.json());}catch(e){$('net').textContent='not answering';return;}
   if(!built) build(s);
   /* Capitalised for show only: other programs recognise the firmware by its lower-case name in /api/status. */
-  $('fw').textContent=s.firmware.charAt(0).toUpperCase()+s.firmware.slice(1)+' '+s.version;
+  $('fw').textContent='v'+s.version;
   $('net').textContent=(s.setupNetwork?'setup network up · ':'')+s.ip+(s.rssi?' · '+s.rssi+' dBm':'');
   $('state').textContent=s.state;
   const look=s.config.states[s.state]; document.documentElement.style.setProperty('--c',look?look.colour:'#64748b');
@@ -333,12 +351,12 @@ async function tick(){
   $('prstate').textContent=!p.paired?'Not paired.'
     :p.connected?'Linked to '+p.ip+(p.gcode?' · printer says '+p.gcode+(p.percent!==undefined?' '+p.percent+'%':'')+(p.bed!==undefined?' · bed '+Math.round(p.bed)+'°':''):' · waiting for its first message')
     :'Paired with '+p.ip+', not linked'+(p.error?': '+p.error:'')+'.';
-  [...bar.children].forEach((el,i)=>{el.style.background='#'+s.frame.substr(i*6,6);});
   if(Date.now()-busy>3000){$('bri').value=s.config.brightness;} $('briv').textContent=$('bri').value+'%';
   const o=s.otherSlot;
   $('slots').textContent='Running from '+s.slot+' ('+s.build+')'+(s.onTrial?' · on trial until it has been on Wi-Fi for 20 s':'')+'. Other slot ('+o.label+'): '+(o.project?o.project+' '+o.version+', built '+o.built:'empty')+'.';
   $('other').disabled=!o.project;
   /* What a closed section says about itself. */
+  $('lookssum').textContent=['idle','printing','error'].map(n=>{const l=s.config.states[n];return n.charAt(0).toUpperCase()+n.slice(1)+' '+(l?l.effect:'');}).join(' · ')+' · and five more';
   const sc=s.config.schedule;
   $('schedsum').textContent=sc.enabled?'Dark '+sc.from+' to '+sc.to+(s.clock.dark?' · dark now':''):'Off';
   $('prsum').textContent=$('prstate').textContent;
@@ -347,8 +365,16 @@ async function tick(){
 }
 /* Which sections are open, remembered by this browser. */
 document.querySelectorAll('details.card').forEach(d=>{
-  try{if(localStorage.getItem(d.id)==='1')d.open=true;}catch(e){}
+  try{const was=localStorage.getItem(d.id);if(was!==null)d.open=was==='1';}catch(e){}
   d.addEventListener('toggle',()=>{try{localStorage.setItem(d.id,d.open?'1':'0');}catch(e){}});
 });
 tick(); setInterval(tick,1000);
+/* The live picture: its own small request five times a second, each LED fading to the next reading (CSS transition) so effects move smoothly instead of jumping once a second. One request at a time, so a slow bar is never queued up. */
+let framing=false;
+async function frameTick(){
+  if(framing||document.hidden)return; framing=true;
+  try{const hex=await fetch('/api/frame').then(r=>r.text());if(hex.length===150)[...bar.children].forEach((el,i)=>{el.style.backgroundColor='#'+hex.substr(i*6,6);});}catch(e){}
+  framing=false;
+}
+setInterval(frameTick,200);
 </script></body></html>)HTML";

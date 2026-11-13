@@ -44,7 +44,7 @@
 
 /* What the firmware calls itself on its page and in /api/status. Plain and generic, so it says what it is on anyone's network. */
 #define FW_NAME "panda"
-#define FW_VERSION "0.6.2"
+#define FW_VERSION "0.6.3"
 /* Where new releases and the add-on store live. A release must carry a
    panda-p2-custom-<version>.bin and a SHA256SUMS.txt that lists it. */
 #define UPDATE_REPO "ImSammyTTV/panda-status-p2-firmware"
@@ -1811,6 +1811,7 @@ struct Fetch {
   WiFiClientSecure tls;
   WiFiClient plain;
   HTTPClient http;
+  String host;                 // the server of the last hop, for the error message
   int begin(String url, uint32_t timeoutMs = 15000) {
     static const char *keep[] = {"Location"};
     for (int hop = 0; hop < 5; hop++) {
@@ -1818,11 +1819,13 @@ struct Fetch {
       tls.stop();
       plain.stop();
       const bool secure = url.startsWith("https://");
+      const int hostAt = url.indexOf("://") + 3;
+      host = url.substring(hostAt, url.indexOf('/', hostAt));
       if (secure) { tls.setCACert(ROOT_CAS); tls.setHandshakeTimeout(12); }
       http.setFollowRedirects(HTTPC_DISABLE_FOLLOW_REDIRECTS);
       http.setTimeout(timeoutMs);
       http.setUserAgent("panda-p2-firmware/" FW_VERSION);
-      if (!(secure ? http.begin(tls, url) : http.begin(plain, url))) return -1;
+      if (!(secure ? http.begin(tls, url) : http.begin(plain, url))) return -100;
       http.addHeader("Accept", "application/json, */*");
       http.collectHeaders(keep, 1);
       const int code = http.GET();
@@ -1833,14 +1836,18 @@ struct Fetch {
     }
     return -1;
   }
+  /* What went wrong, in enough detail to act on: which server, which step, and what the secure connection itself reported. */
+  String error(int code) {
+    if (code > 0) return host + " answered " + String(code);
+    if (code == -100) return "The address could not be read";
+    char tlsWhy[96] = "";
+    const int tlsCode = tls.lastError(tlsWhy, sizeof tlsWhy);
+    String why = host + ": " + HTTPClient::errorToString(code);
+    if (tlsCode) why += " (secure connection: " + String(tlsWhy) + ")";
+    return why;
+  }
   ~Fetch() { http.end(); }
 };
-
-static String fetchError(int code) {
-  if (code > 0) return "The server answered " + String(code);
-  if (code == HTTPC_ERROR_CONNECTION_REFUSED) return "Could not connect (no internet, or the server's certificate was not trusted)";
-  return "Could not reach the server (" + HTTPClient::errorToString(code) + ")";
-}
 
 /* "v0.6.1" against "0.6.0": numbers compared part by part. */
 static bool versionNewer(const char *latest, const char *current) {
@@ -1865,7 +1872,7 @@ static bool updCheck() {
   updPhase = UPD_CHECKING;
   Fetch f;
   const int code = f.begin("https://api.github.com/repos/" UPDATE_REPO "/releases/latest");
-  if (code != 200) { updMessage = code == 404 ? String("No release published yet") : fetchError(code); updPhase = UPD_FAILED; return false; }
+  if (code != 200) { updMessage = code == 404 ? String("No release published yet") : f.error(code); updPhase = UPD_FAILED; return false; }
   JsonDocument filter;
   filter["tag_name"] = true;
   filter["html_url"] = true;
@@ -1907,7 +1914,7 @@ static bool updInstall() {
   {
     Fetch f;
     const int code = f.begin(updSumsUrl);
-    if (code != 200) return updFail("Checksum list: " + fetchError(code));
+    if (code != 200) return updFail("Checksum list: " + f.error(code));
     const String sums = f.http.getString();
     const int at = sums.indexOf(updAssetName);
     if (at < 0) return updFail("The checksum list does not mention " + updAssetName);
@@ -1926,7 +1933,7 @@ static bool updInstall() {
 
   Fetch f;
   const int code = f.begin(updAssetUrl, 20000);
-  if (code != 200) return updFail("Download: " + fetchError(code));
+  if (code != 200) return updFail("Download: " + f.error(code));
   const int total = f.http.getSize();
   if (total <= 0) return updFail("The download did not say how big it is");
   if (!Update.begin(total)) return updFail(String("Will not fit: ") + Update.errorString());
@@ -2069,7 +2076,7 @@ static const char *faLoad(const String &text) {
 static bool faFetchValue(float &out) {
   Fetch f;
   const int code = f.begin(faSrcUrl);
-  if (code != 200) { faError = fetchError(code); return false; }
+  if (code != 200) { faError = f.error(code); return false; }
   const int size = f.http.getSize();
   if (size > 32768) { faError = "The answer is too big for the bar (over 32 KB)"; return false; }
   const String body = f.http.getString();
@@ -2149,7 +2156,7 @@ static void faTick() {
     if (faUrl.length()) {
       Fetch f;
       const int code = f.begin(faUrl);
-      if (code != 200) { faError = "Fetching it: " + fetchError(code) + ". Trying again in a minute."; faReload = true; faRetryAt = millis() + 60000; return; }
+      if (code != 200) { faError = "Fetching it: " + f.error(code) + ". Trying again in a minute."; faReload = true; faRetryAt = millis() + 60000; return; }
       if (f.http.getSize() > (int)FA_MAX_FETCH) { faError = "The add-on file is too big"; faPick = false; return; }
       text = f.http.getString();
     }
@@ -2356,6 +2363,13 @@ void setup() {
   server.on("/api/slot", HTTP_POST, handleSlot);
   server.on("/api/reboot", HTTP_POST, handleReboot);
   server.on("/api/factory", HTTP_POST, handleFactory);
+  /* Just the 25 colours, for the page's live picture: a few hundred bytes, so it can be asked five times a second where the full status is asked once. */
+  server.on("/api/frame", HTTP_GET, []() {
+    char hex[LED_COUNT * 6 + 1];
+    for (int i = 0; i < LED_COUNT; i++) snprintf(hex + i * 6, 7, "%02x%02x%02x", frame[i][0], frame[i][1], frame[i][2]);
+    server.sendHeader("Cache-Control", "no-store");
+    server.send(200, "text/plain", hex);
+  });
   server.on("/api/addonfile", HTTP_POST, handleAddonFile);
   server.on("/api/ap", HTTP_POST, handleAp);
   server.on("/api/wifi/scan", HTTP_GET, handleWifiScan);
