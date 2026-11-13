@@ -1,0 +1,8 @@
+.pio/
+.vscode/
+build/
+__pycache__/
+*.pyc
+# Full-flash backups hold a device's Wi-Fi password and printer access code.
+*_full_*.bin
+backup*.bin

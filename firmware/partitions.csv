@@ -1,0 +1,8 @@
+# Identical to the table on the device (read from the backup, see RESTORE.md).
+# It is here only so the build knows the slot size; the table on the bar is never rewritten.
+# Name,   Type, SubType,  Offset,   Size
+nvs,      data, nvs,      0x9000,   0x3000,
+otadata,  data, ota,      0xC000,   0x2000,
+app0,     app,  ota_0,    0x10000,  0x1F0000,
+app1,     app,  ota_1,    0x200000, 0x1F0000,
+coredump, data, coredump, 0x3F0000, 0x10000,
