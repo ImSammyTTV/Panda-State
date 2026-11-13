@@ -1,5 +1,11 @@
 # Custom firmware for the BIQU Panda Status P2
 
+<p align="center">
+  <a href="https://ko-fi.com/imsammyttv"><img src="https://ko-fi.com/img/githubbutton_sm.svg" alt="Support this project on Ko-fi" height="36"></a>
+  <br>
+  <sub>Free and open. If it makes your printer nicer to live with, a coffee on Ko-fi helps fund the next feature.</sub>
+</p>
+
 An open, replacement firmware for the **BIQU (BigTreeTech) Panda Status P2**,
 the 25-LED status light bar for Bambu Lab P2S and X2D printers. It keeps what
 the stock firmware does, adds a proper cool-down state, seventeen lighting
