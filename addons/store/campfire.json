@@ -1,0 +1,12 @@
+{
+    "id":  "campfire",
+    "name":  "Campfire",
+    "description":  "Flickering orange and red embers.",
+    "author":  "panda-status-p2-firmware",
+    "look":  {
+                 "colour":  "#FF6A00",
+                 "colour2":  "#FF1E00",
+                 "effect":  "fire",
+                 "speed":  55
+             }
+}

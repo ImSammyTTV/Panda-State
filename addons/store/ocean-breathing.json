@@ -1,0 +1,12 @@
+{
+    "id":  "ocean",
+    "name":  "Ocean breathing",
+    "description":  "A calm blue that rises and falls, slow enough to fall asleep to.",
+    "author":  "panda-status-p2-firmware",
+    "look":  {
+                 "colour":  "#0EA5E9",
+                 "colour2":  "#1E3A8A",
+                 "effect":  "breathe",
+                 "speed":  22
+             }
+}

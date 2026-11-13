@@ -1,0 +1,11 @@
+{
+    "id":  "rainbow",
+    "name":  "Rainbow",
+    "description":  "Every colour, rolling end to end.",
+    "author":  "panda-status-p2-firmware",
+    "look":  {
+                 "colour":  "#FF0000",
+                 "effect":  "rainbow",
+                 "speed":  45
+             }
+}

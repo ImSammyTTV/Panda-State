@@ -1,0 +1,53 @@
+{
+    "version":  1,
+    "addons":  [
+                   {
+                       "file":  "aurora.json",
+                       "name":  "Aurora",
+                       "description":  "Greens and violets drifting slowly along the bar, like the northern lights.",
+                       "author":  "panda-status-p2-firmware",
+                       "kind":  "look",
+                       "preview":  "22C55E30B7723DAA854A9D985690AA6285BB6C7BC97572D77D6AE28364EA8760F18A5DF58B5CF68A5DF58760F18364EA7D6AE27572D76C7BC96285BB5690AA4A9D983DAA8530B77222C55E"
+                   },
+                   {
+                       "file":  "ocean-breathing.json",
+                       "name":  "Ocean breathing",
+                       "description":  "A calm blue that rises and falls, slow enough to fall asleep to.",
+                       "author":  "panda-status-p2-firmware",
+                       "kind":  "look",
+                       "preview":  "0EA5E91097DD1289D0147CC51670BA1864AF1959A61B509E1C48971D42911D3E8D1E3B8B1E3A8A1E3B8B1D3E8D1D42911C48971B509E1959A61864AF1670BA147CC51289D01097DD0EA5E9"
+                   },
+                   {
+                       "file":  "campfire.json",
+                       "name":  "Campfire",
+                       "description":  "Flickering orange and red embers.",
+                       "author":  "panda-status-p2-firmware",
+                       "kind":  "look",
+                       "preview":  "FF6A00F66004ED5607E44C0BDC430ED43B11CE3314C72C16C22618BE221ABB1F1BBA1D1CB91C1CBA1D1CBB1F1BBE221AC22618C72C16CE3314D43B11DC430EE44C0BED5607F66004FF6A00"
+                   },
+                   {
+                       "file":  "rainbow.json",
+                       "name":  "Rainbow",
+                       "description":  "Every colour, rolling end to end.",
+                       "author":  "panda-status-p2-firmware",
+                       "kind":  "look",
+                       "preview":  "FF0000FF3D00FF7A00FFB800FFF500CCFF008FFF0052FF0014FF0000FF2900FF6600FFA300FFE000E0FF00A3FF0066FF0029FF1400FF5200FF8F00FFCC00FFFF00F5FF00B8FF007AFF003D"
+                   },
+                   {
+                       "file":  "police-lights.json",
+                       "name":  "Police lights",
+                       "description":  "Red then blue, double flashes, the two halves of the bar taking turns.",
+                       "author":  "panda-status-p2-firmware",
+                       "kind":  "animation",
+                       "preview":  "FF0000FF0000FF0000FF0000FF0000FF0000FF0000FF0000FF0000FF0000FF0000FF00000000000040FF0040FF0040FF0040FF0040FF0040FF0040FF0040FF0040FF0040FF0040FF0040FF"
+                   },
+                   {
+                       "file":  "bitcoin-24h.json",
+                       "name":  "Bitcoin, last 24 hours",
+                       "description":  "A meter of the change in the price of bitcoin over the last day: half way is no change, full is up 10% or more, empty is down 10% or more. From CoinGecko, every 5 minutes.",
+                       "author":  "panda-status-p2-firmware",
+                       "kind":  "live meter",
+                       "preview":  "F7931AF7931AF7931AF7931AF7931AF7931AF7931AF7931AF7931AF7931AF7931AF7931AF7931AF7931AF7931A111418111418111418111418111418111418111418111418111418111418"
+                   }
+               ]
+}
