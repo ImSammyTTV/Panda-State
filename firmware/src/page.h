@@ -217,6 +217,7 @@ function renderAddons(s){
     :'<div class="empty">Nothing yet. Pick one from the store below, or upload a file of your own.</div>';
   if(html!==window.adHtml){window.adHtml=html;$('adtiles').innerHTML=html;}
   $('adnone').hidden=!want;
+  if(window.storeIdx&&s.addonFile.url!==window.storeFor){last=s;drawStore();}
   const on=tiles.find(t=>t.id&&t.id===want);
   $('adsum').textContent=on?on.name+(s.addonShowing===on.id?' · on the bar now':''):'None picked';
 }
@@ -233,6 +234,12 @@ async function openStore(){
   let idx;try{idx=await fetch(STORE+'index.json',{cache:'no-store'}).then(r=>{if(!r.ok)throw 0;return r.json();});}
   catch(e){$('storenote').textContent='Could not reach the store: it needs internet on this device';$('storelist').innerHTML='';return;}
   $('storenote').textContent=idx.addons.length+' from GitHub · one at a time';
+  window.storeIdx=idx; drawStore();
+}
+/* Drawn again whenever the bar's add-on changes, so the card it came from says In use even when the store was read before the bar first answered. */
+function drawStore(){
+  const idx=window.storeIdx;if(!idx)return;
+  window.storeFor=last?last.addonFile.url:null;
   $('storelist').innerHTML=idx.addons.map(a=>{const url=STORE+a.file,using=last&&last.addonFile.url===url,cols=(a.preview||'').match(/[0-9a-fA-F]{6}/g)||[];
     return '<div class="tile"'+(using?' data-on':'')+'><div class="t"><span>'+esc(a.name)+'</span><em class="tag">'+esc(a.kind)+'</em></div>'
       +(cols.length===25?'<div class="sw">'+cols.map(c=>'<i style="background:#'+c+'"></i>').join('')+'</div>':'')

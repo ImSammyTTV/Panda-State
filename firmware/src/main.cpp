@@ -44,7 +44,7 @@
 
 /* What the firmware calls itself on its page and in /api/status. Plain and generic, so it says what it is on anyone's network. */
 #define FW_NAME "panda"
-#define FW_VERSION "0.6.5"
+#define FW_VERSION "0.6.6"
 /* Where new releases and the add-on store live. A release must carry a
    panda-p2-custom-<version>.bin and a SHA256SUMS.txt that lists it. */
 #define UPDATE_REPO "ImSammyTTV/panda-status-p2-firmware"

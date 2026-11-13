@@ -1,2 +1,2 @@
-577807e5d41af69a6d8c4fa8e542422ee1c0bf548cc1cf8b73d24dfc3185f2aa  panda-p2-custom-0.6.5.bin
+64ee8ece39781938e670d9dcb8d1a139eb33af7b0f21d206f6cf9ef4270fadc5  panda-p2-custom-0.6.6.bin
 1ab7e1e886c71d44fe885bc39d5f60ef61a6c20589254672177ec715843b0450  panda-p2-stock-v1.0.0-app.bin

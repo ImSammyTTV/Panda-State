@@ -20,7 +20,7 @@ the stock firmware does, adds a proper cool-down state, seventeen lighting
 effects, a schedule, Music mode, a clean web page, and an open HTTP API so
 anything on your network can use the bar.
 
-![The firmware's web page: live LEDs, brightness, mode, and each state's look](docs/web-page-status-and-looks.png)
+<p align="center"><img src="docs/web-page-status-and-looks.png" alt="The firmware's web page: what the bar is showing, its 25 LEDs live, brightness, mode, and each state's look" width="560"></p>
 
 > **Read this first.**
 > - This is **unofficial**. It is not made, endorsed or supported by BIQU,
@@ -79,9 +79,21 @@ The button on the bar: press once for the next Music sensitivity, twice to
 switch between Music and following the printer, hold for five seconds to start
 the setup Wi-Fi network.
 
-![Add-ons, printer pairing, Wi-Fi and firmware sections of the page](docs/web-page-addons-printer-firmware.png)
+### The bar's page
 
-*(Screenshots from a running bar; network addresses replaced with examples.)*
+Every section folds away, and a closed one still says how things are:
+
+<p align="center"><img src="docs/web-page-overview.png" alt="The page with every section folded: status, state looks, add-ons, schedule, printer, Wi-Fi and firmware, each with a one-line summary" width="560"></p>
+
+The add-ons, with the store read from this repository (weather, air quality and prices for your own town, looks and an animation):
+
+<p align="center"><img src="docs/web-page-addons-store.png" alt="The Add-ons section: the add-on on the bar now, and the store's cards with colour previews" width="560"></p>
+
+Wi-Fi with its hotspot fallback, and updates straight from GitHub:
+
+<p align="center"><img src="docs/web-page-wifi-firmware.png" alt="The Wi-Fi section with the hotspot settings, and the Firmware section showing it is up to date" width="560"></p>
+
+*(Screenshots from a running bar; network names, addresses and passwords replaced with examples.)*
 
 ## The hardware, and why this is possible
 
@@ -125,10 +137,10 @@ It works because:
 ## Installing
 
 You need: a Panda Status P2 on your Wi-Fi, its IP address (the stock app or
-your router shows it), and `releases/panda-p2-custom-0.6.5.bin`.
+your router shows it), and `releases/panda-p2-custom-0.6.6.bin`.
 
 **From the stock firmware's page:** open `http://<bar address>/`, find the
-firmware update section, choose `panda-p2-custom-0.6.5.bin` and upload it.
+firmware update section, choose `panda-p2-custom-0.6.6.bin` and upload it.
 
 **Or from a terminal:**
 
@@ -136,12 +148,12 @@ firmware update section, choose `panda-p2-custom-0.6.5.bin` and upload it.
 curl -X POST http://<bar address>/ota \
      -H "OTA-Type: ota_fw" \
      -H "Content-Type: application/octet-stream" \
-     --data-binary @releases/panda-p2-custom-0.6.5.bin
+     --data-binary @releases/panda-p2-custom-0.6.6.bin
 ```
 
 The bar restarts into the new firmware within a few seconds, joins the same
 Wi-Fi and keeps its printer pairing. Open `http://<bar address>/` again: the
-page now says *v0.6.5*.
+page now says *v0.6.6*.
 
 Check the download against `releases/SHA256SUMS.txt` first.
 
