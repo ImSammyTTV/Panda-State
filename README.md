@@ -5,7 +5,7 @@
 <p align="center">
   <a href="https://github.com/ImSammyTTV/Panda-State/releases/latest"><img src="https://img.shields.io/github/v/release/ImSammyTTV/Panda-State?style=for-the-badge&color=ff7a3d&label=Download" alt="Latest release"></a>
   <a href="https://github.com/ImSammyTTV/Panda-State/releases"><img src="https://img.shields.io/github/downloads/ImSammyTTV/Panda-State/total?style=for-the-badge&color=f5b400&label=Downloads" alt="Downloads"></a>
-  <img src="https://img.shields.io/badge/P2%20%C2%B7%20Status%20%C2%B7%20Lux%20%C2%B7%20RGB-ESP32--C3-2f2f35?style=for-the-badge" alt="Panda Status P2, Panda Status, Panda Lux RGB, Panda RGB Controller; ESP32-C3">
+  <img src="https://img.shields.io/badge/ESP32--C3-4%20boards-2f2f35?style=for-the-badge" alt="ESP32-C3, four boards: Panda Status P2, Panda Status, Panda Lux RGB, Panda RGB Controller">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-00c46a?style=for-the-badge" alt="MIT license"></a>
   <a href="https://ko-fi.com/imsammyttv"><img src="https://img.shields.io/badge/Buy_me_a-drink-ff5e5b?style=for-the-badge&logo=kofi&logoColor=white" alt="Buy me a drink on Ko-fi"></a>
 </p>
