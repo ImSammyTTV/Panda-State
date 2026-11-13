@@ -24,7 +24,7 @@ and an open API.
 > For the **Panda Status P2 only**: not tested on the original Panda Status or
 > anything else. **Use at your own risk** (see the [disclaimer](#disclaimer)).
 
-<p align="center"><img src="docs/live-leds.gif" alt="The bar's own web page, its live picture of the 25 LEDs running the rainbow effect" width="640"></p>
+<p align="center"><img src="docs/live-leds.png" alt="The bar's own web page, its live picture of the 25 LEDs running the rainbow effect" width="640"></p>
 
 ## Highlights
 
