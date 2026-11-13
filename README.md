@@ -261,14 +261,14 @@ as above.
 
 - If stock is still in the other slot: press **Start the firmware in the other
   slot** on this firmware's page.
-- Otherwise install `panda-p2-stock-v1.0.0-app.bin` (in every release) with
-  **Firmware → Install file**.
+- Otherwise install [`releases/panda-p2-stock-v1.0.0-app.bin`](releases/panda-p2-stock-v1.0.0-app.bin)
+  from this repository with **Firmware → Install file**.
 
-That file is BIQU's V1.0.0 application image, unmodified. It holds no Wi-Fi,
+That file is BIQU's V1.0.0 P2 application image, unmodified. It holds no Wi-Fi,
 printer or other settings (those live elsewhere in the flash) and was checked
-for them. It is BIQU's work, not covered by this project's licence, and is here
-only for going back: BIQU's own release notes point to a repository that holds
-no firmware files.
+for them. It is BIQU's work, not covered by this project's licence, and is kept
+here only for going back: BIQU's own release notes point to a repository that
+holds no firmware files. It is not attached to the GitHub releases.
 
 Back on stock, its own defaults apply: `http://PandaStatus.local`, hotspot
 `Panda_Status_P2_…` with password `987654321` at `192.168.254.1`.
@@ -372,7 +372,7 @@ Provided **as is**, without warranty of any kind. Installing third-party
 firmware may void your warranty and can leave a device unusable. **The authors
 accept no responsibility or liability** for any damage, loss, injury, failed
 prints or other consequence of using, installing or being unable to use this
-firmware or the stock image included with it. You alone decide whether to use
+firmware or the stock image kept with it. You alone decide whether to use
 it.
 
 BIQU, BigTreeTech, Panda Status, Panda Lux, Panda Vent, Bambu Lab, P2S, X2D,
@@ -382,4 +382,4 @@ say which hardware and software this works with.
 ## Licence
 
 The firmware, its page and the add-on script are [MIT licensed](LICENSE). The
-stock firmware image in the releases is BIQU's and is not covered by it.
+stock firmware image in the `releases` folder is BIQU's and is not covered by it.

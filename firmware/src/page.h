@@ -71,7 +71,7 @@ details.card[open]>summary{margin-bottom:12px}
 </style></head><body><main>
 
 <section class="card" id="now">
-  <div class="head"><b id="board">Panda Status</b><span class="chip" id="fw">…</span><span class="more"><span id="net"></span><span class="sig" id="sig" title="Wi-Fi signal"><i></i><i></i><i></i><i></i></span></span></div>
+  <div class="head"><b>Panda State</b><span class="chip" id="fw">…</span><span class="more"><span id="net"></span><span class="sig" id="sig" title="Wi-Fi signal"><i></i><i></i><i></i><i></i></span></span></div>
   <div class="big" id="state">…</div>
   <div class="sub" id="said"></div>
   <div class="bar" id="bar"></div>
@@ -191,7 +191,7 @@ function build(s){
   $('prtype').value=s.printer.type||'bambu'; showPrType();
   if(s.printer.type==='klipper'){$('klhost').value=s.printer.ip||'';$('klport').value=s.printer.port||7125;}else{$('prip').value=s.printer.ip||''; $('prsn').value=s.printer.serial||'';}
   const h=s.homeAssistant; haOn=h.on; paintHa(); $('hahost').value=h.host; $('haport').value=h.port; $('hauser').value=h.user; $('haprefix').value=h.prefix; $('hatopic').textContent=h.topic;
-  $('board').textContent=s.boardName||'Panda Status';
+
   const p2=(s.board||'p2')==='p2'; $('moderow').hidden=!p2; $('btnhelp').textContent=p2?$('btnhelp').textContent:'Button on the board: hold five seconds for the setup Wi-Fi network.';
   if(s.board==='status'){$('striprow').hidden=false;$('striplen').value=s.config.stripLength;}
   if(s.board==='rgb'){$('splitrow').hidden=false;$('split').checked=s.config.split;} $('cmin').value=s.config.cool.minutes; $('cbed').value=s.config.cool.target;
@@ -426,7 +426,8 @@ async function tick(){
   if(!built) build(s);
   /* Capitalised for show only: other programs recognise the firmware by its lower-case name in /api/status. */
   $('fw').textContent='v'+s.version;
-  $('net').textContent=(s.setupNetwork?'setup network up · ':'')+s.ip+(s.rssi?' · '+s.rssi+' dBm':'');
+  /* The board's own name sits with the address: the heading is the firmware's name, the same on every board. */
+  $('net').textContent=(s.boardName?s.boardName+' · ':'')+(s.setupNetwork?'setup network up · ':'')+s.ip+(s.rssi?' · '+s.rssi+' dBm':'');
   /* Four bars like a phone's, coloured by how usable the link is: -60 dBm and better is solid, below -80 the page and updates start to struggle. */
   const r=s.rssi||-200,bars=r>=-60?4:r>=-70?3:r>=-80?2:r>-200?1:0,col=bars===4?'#22c55e':bars===3?'#eab308':bars===2?'#f97316':'#ef4444';
   [...$('sig').children].forEach((el,i)=>{el.style.background=i<bars?col:'';}); $('sig').hidden=!s.rssi;

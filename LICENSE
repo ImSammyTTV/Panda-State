@@ -21,5 +21,5 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 This licence covers the firmware source, its web page and the add-on script.
-It does not cover releases/panda-p2-stock-v1.0.0-app.bin, which is BIQU's
-original firmware, included unmodified so a device can be returned to stock.
+It does not cover releases/panda-p2-stock-v1.0.0-app.bin, which is
+BIQU's original firmware, kept unmodified so a device can be returned to stock.
