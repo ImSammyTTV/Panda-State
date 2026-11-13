@@ -1,0 +1,107 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 360" width="1280" height="360" role="img" aria-label="Panda Status P2 custom firmware: open firmware for the BIQU Panda Status P2 light bar">
+  <defs>
+    <radialGradient id="glow" cx="50%" cy="22%" r="75%">
+      <stop offset="0" stop-color="#ff7a3d" stop-opacity=".20"/>
+      <stop offset="1" stop-color="#ff7a3d" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="title" x1="0" x2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#ffc2a3"/>
+    </linearGradient>
+    <filter id="bloom" x="-20%" y="-200%" width="140%" height="500%">
+      <feGaussianBlur stdDeviation="14"/>
+    </filter>
+    <style>
+      .ring{fill:none;stroke:#fff;stroke-width:1.2;stroke-opacity:.07}
+      .rail{fill:#121318;stroke:#fff;stroke-opacity:.12;stroke-width:1.5}
+      .led{fill:#ff3b30;animation:hue 5.5s linear infinite}
+      @keyframes hue{
+        0%{fill:#ff3b30}14%{fill:#ff9500}28%{fill:#ffd60a}42%{fill:#34c759}
+        57%{fill:#00c7be}71%{fill:#0a84ff}85%{fill:#bf5af2}100%{fill:#ff3b30}}
+      .halo{opacity:.55}
+      .pill{fill:#ff7a3d;fill-opacity:.14;stroke:#ff7a3d;stroke-opacity:.5}
+      .pt{fill:#ffb08a}
+      text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Helvetica,Arial,sans-serif}
+      @media (prefers-reduced-motion:reduce){.led{animation:none}}
+    </style>
+  </defs>
+
+  <rect width="1280" height="360" fill="#000"/>
+  <rect width="1280" height="360" fill="url(#glow)"/>
+
+  <g>
+    <circle class="ring" cx="640" cy="109" r="240"/>
+    <circle class="ring" cx="640" cy="109" r="420"/>
+    <circle class="ring" cx="640" cy="109" r="600"/>
+    <circle class="ring" cx="640" cy="109" r="780"/>
+  </g>
+
+  <!-- the bar: 25 LEDs, each a step behind the one before, so the colours flow along it -->
+  <rect class="rail" x="205" y="80" width="870" height="58" rx="18"/>
+  <g class="halo" filter="url(#bloom)">
+    <rect class="led" x="223" y="96" width="26" height="26" rx="7" style="animation-delay:0s"/>
+    <rect class="led" x="257" y="96" width="26" height="26" rx="7" style="animation-delay:-0.22s"/>
+    <rect class="led" x="291" y="96" width="26" height="26" rx="7" style="animation-delay:-0.44s"/>
+    <rect class="led" x="325" y="96" width="26" height="26" rx="7" style="animation-delay:-0.66s"/>
+    <rect class="led" x="359" y="96" width="26" height="26" rx="7" style="animation-delay:-0.88s"/>
+    <rect class="led" x="393" y="96" width="26" height="26" rx="7" style="animation-delay:-1.1s"/>
+    <rect class="led" x="427" y="96" width="26" height="26" rx="7" style="animation-delay:-1.32s"/>
+    <rect class="led" x="461" y="96" width="26" height="26" rx="7" style="animation-delay:-1.54s"/>
+    <rect class="led" x="495" y="96" width="26" height="26" rx="7" style="animation-delay:-1.76s"/>
+    <rect class="led" x="529" y="96" width="26" height="26" rx="7" style="animation-delay:-1.98s"/>
+    <rect class="led" x="563" y="96" width="26" height="26" rx="7" style="animation-delay:-2.2s"/>
+    <rect class="led" x="597" y="96" width="26" height="26" rx="7" style="animation-delay:-2.42s"/>
+    <rect class="led" x="631" y="96" width="26" height="26" rx="7" style="animation-delay:-2.64s"/>
+    <rect class="led" x="665" y="96" width="26" height="26" rx="7" style="animation-delay:-2.86s"/>
+    <rect class="led" x="699" y="96" width="26" height="26" rx="7" style="animation-delay:-3.08s"/>
+    <rect class="led" x="733" y="96" width="26" height="26" rx="7" style="animation-delay:-3.3s"/>
+    <rect class="led" x="767" y="96" width="26" height="26" rx="7" style="animation-delay:-3.52s"/>
+    <rect class="led" x="801" y="96" width="26" height="26" rx="7" style="animation-delay:-3.74s"/>
+    <rect class="led" x="835" y="96" width="26" height="26" rx="7" style="animation-delay:-3.96s"/>
+    <rect class="led" x="869" y="96" width="26" height="26" rx="7" style="animation-delay:-4.18s"/>
+    <rect class="led" x="903" y="96" width="26" height="26" rx="7" style="animation-delay:-4.4s"/>
+    <rect class="led" x="937" y="96" width="26" height="26" rx="7" style="animation-delay:-4.62s"/>
+    <rect class="led" x="971" y="96" width="26" height="26" rx="7" style="animation-delay:-4.84s"/>
+    <rect class="led" x="1005" y="96" width="26" height="26" rx="7" style="animation-delay:-5.06s"/>
+    <rect class="led" x="1039" y="96" width="26" height="26" rx="7" style="animation-delay:-5.28s"/>
+  </g>
+  <g>
+    <rect class="led" x="223" y="96" width="26" height="26" rx="7" style="animation-delay:0s"/>
+    <rect class="led" x="257" y="96" width="26" height="26" rx="7" style="animation-delay:-0.22s"/>
+    <rect class="led" x="291" y="96" width="26" height="26" rx="7" style="animation-delay:-0.44s"/>
+    <rect class="led" x="325" y="96" width="26" height="26" rx="7" style="animation-delay:-0.66s"/>
+    <rect class="led" x="359" y="96" width="26" height="26" rx="7" style="animation-delay:-0.88s"/>
+    <rect class="led" x="393" y="96" width="26" height="26" rx="7" style="animation-delay:-1.1s"/>
+    <rect class="led" x="427" y="96" width="26" height="26" rx="7" style="animation-delay:-1.32s"/>
+    <rect class="led" x="461" y="96" width="26" height="26" rx="7" style="animation-delay:-1.54s"/>
+    <rect class="led" x="495" y="96" width="26" height="26" rx="7" style="animation-delay:-1.76s"/>
+    <rect class="led" x="529" y="96" width="26" height="26" rx="7" style="animation-delay:-1.98s"/>
+    <rect class="led" x="563" y="96" width="26" height="26" rx="7" style="animation-delay:-2.2s"/>
+    <rect class="led" x="597" y="96" width="26" height="26" rx="7" style="animation-delay:-2.42s"/>
+    <rect class="led" x="631" y="96" width="26" height="26" rx="7" style="animation-delay:-2.64s"/>
+    <rect class="led" x="665" y="96" width="26" height="26" rx="7" style="animation-delay:-2.86s"/>
+    <rect class="led" x="699" y="96" width="26" height="26" rx="7" style="animation-delay:-3.08s"/>
+    <rect class="led" x="733" y="96" width="26" height="26" rx="7" style="animation-delay:-3.3s"/>
+    <rect class="led" x="767" y="96" width="26" height="26" rx="7" style="animation-delay:-3.52s"/>
+    <rect class="led" x="801" y="96" width="26" height="26" rx="7" style="animation-delay:-3.74s"/>
+    <rect class="led" x="835" y="96" width="26" height="26" rx="7" style="animation-delay:-3.96s"/>
+    <rect class="led" x="869" y="96" width="26" height="26" rx="7" style="animation-delay:-4.18s"/>
+    <rect class="led" x="903" y="96" width="26" height="26" rx="7" style="animation-delay:-4.4s"/>
+    <rect class="led" x="937" y="96" width="26" height="26" rx="7" style="animation-delay:-4.62s"/>
+    <rect class="led" x="971" y="96" width="26" height="26" rx="7" style="animation-delay:-4.84s"/>
+    <rect class="led" x="1005" y="96" width="26" height="26" rx="7" style="animation-delay:-5.06s"/>
+    <rect class="led" x="1039" y="96" width="26" height="26" rx="7" style="animation-delay:-5.28s"/>
+  </g>
+
+  <text x="640" y="222" text-anchor="middle" font-size="60" font-weight="700" letter-spacing="-1.5" fill="url(#title)">Panda Status P2</text>
+  <text x="640" y="262" text-anchor="middle" font-size="21" fill="#9a9aa2">Open custom firmware for the BIQU light bar on Bambu Lab P2S and X2D</text>
+
+  <g transform="translate(640 312)" font-size="14" font-weight="600">
+    <rect class="pill" x="-216" y="-16" width="132" height="30" rx="15"/>
+    <text class="pt" x="-150" y="5" text-anchor="middle">Cool-down state</text>
+    <rect class="pill" x="-72" y="-16" width="144" height="30" rx="15"/>
+    <text class="pt" x="0" y="5" text-anchor="middle">17 lighting effects</text>
+    <rect class="pill" x="84" y="-16" width="132" height="30" rx="15"/>
+    <text class="pt" x="150" y="5" text-anchor="middle">Open HTTP API</text>
+  </g>
+</svg>

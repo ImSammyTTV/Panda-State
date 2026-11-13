@@ -1,10 +1,18 @@
-# Custom firmware for the BIQU Panda Status P2
+<p align="center">
+  <img src="assets/banner.svg" alt="Panda Status P2: open custom firmware for the BIQU light bar on Bambu Lab P2S and X2D" width="100%">
+</p>
 
 <p align="center">
-  <a href="https://ko-fi.com/imsammyttv"><img src="https://ko-fi.com/img/githubbutton_sm.svg" alt="Support this project on Ko-fi" height="36"></a>
-  <br>
-  <sub>Free and open. If it makes your printer nicer to live with, a coffee on Ko-fi helps fund the next feature.</sub>
+  <a href="https://github.com/ImSammyTTV/panda-status-p2-firmware/releases/latest"><img src="https://img.shields.io/github/v/release/ImSammyTTV/panda-status-p2-firmware?style=for-the-badge&color=ff7a3d&label=Download" alt="Latest release"></a>
+  <a href="https://github.com/ImSammyTTV/panda-status-p2-firmware/releases"><img src="https://img.shields.io/github/downloads/ImSammyTTV/panda-status-p2-firmware/total?style=for-the-badge&color=f5b400&label=Downloads" alt="Downloads"></a>
+  <img src="https://img.shields.io/badge/Panda%20Status%20P2-ESP32--C3-2f2f35?style=for-the-badge" alt="Panda Status P2, ESP32-C3">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-00c46a?style=for-the-badge" alt="MIT license"></a>
+  <a href="https://ko-fi.com/imsammyttv"><img src="https://img.shields.io/badge/Buy_me_a-drink-ff5e5b?style=for-the-badge&logo=kofi&logoColor=white" alt="Buy me a drink on Ko-fi"></a>
 </p>
+
+# Custom firmware for the BIQU Panda Status P2
+
+<p align="center"><sub>Free and open. If it makes your printer nicer to live with, a drink on <a href="https://ko-fi.com/imsammyttv">Ko-fi</a> helps fund the next feature.</sub></p>
 
 An open, replacement firmware for the **BIQU (BigTreeTech) Panda Status P2**,
 the 25-LED status light bar for Bambu Lab P2S and X2D printers. It keeps what
