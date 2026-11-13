@@ -265,23 +265,20 @@ as above.
 <summary><b>↩️ Going back to the stock firmware</b></summary>
 <br>
 
-- If stock is still in the other slot: press **Start the firmware in the other
-  slot** on this firmware's page.
-- Otherwise install [`releases/panda-p2-stock-v1.0.0-app.bin`](releases/panda-p2-stock-v1.0.0-app.bin)
-  from this repository with **Firmware → Install file**.
+This project does not distribute BIQU's firmware. The way back is the copy of
+stock your own bar already has:
 
-That file is BIQU's V1.0.0 P2 application image, unmodified. It holds no Wi-Fi,
-printer or other settings (those live elsewhere in the flash) and was checked
-for them. It is BIQU's work, not covered by this project's licence, and is kept
-here only for going back: BIQU's own release notes point to a repository that
-holds no firmware files. It is not attached to the GitHub releases.
+- **Stock is in the other slot** after the first install, and stays there as
+  long as you update through stock (see *Keeping stock* above). Press **Start
+  the firmware in the other slot** on this firmware's page.
+- **A full backup before the first install** is the surest way back of all,
+  over USB-C with Espressif's `esptool` (115200 baud):
+  `esptool.py --baud 115200 read_flash 0 0x400000 backup.bin`. Keep it to
+  yourself: it holds your Wi-Fi password and printer access code. To restore,
+  `esptool.py --baud 115200 write_flash 0 backup.bin`.
 
 Back on stock, its own defaults apply: `http://PandaStatus.local`, hotspot
 `Panda_Status_P2_…` with password `987654321` at `192.168.254.1`.
-
-If a bar stops answering altogether, reflash it over USB-C with Espressif's
-`esptool` (115200 baud): write the stock image to `0x10000` and erase
-`otadata` at `0xC000`.
 
 </details>
 
@@ -378,7 +375,7 @@ Provided **as is**, without warranty of any kind. Installing third-party
 firmware may void your warranty and can leave a device unusable. **The authors
 accept no responsibility or liability** for any damage, loss, injury, failed
 prints or other consequence of using, installing or being unable to use this
-firmware or the stock image kept with it. You alone decide whether to use
+firmware. You alone decide whether to use
 it.
 
 BIQU, BigTreeTech, Panda Status, Panda Lux, Panda Vent, Bambu Lab, P2S, X2D,
@@ -387,5 +384,4 @@ say which hardware and software this works with.
 
 ## Licence
 
-The firmware, its page and the add-on script are [MIT licensed](LICENSE). The
-stock firmware image in the `releases` folder is BIQU's and is not covered by it.
+The firmware, its page and the add-on script are [MIT licensed](LICENSE).

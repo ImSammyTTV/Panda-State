@@ -6,3 +6,6 @@ __pycache__/
 # Full-flash backups hold a device's Wi-Fi password and printer access code.
 *_full_*.bin
 backup*.bin
+
+# BIQU's firmware is never distributed from here.
+*stock*.bin
