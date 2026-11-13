@@ -88,12 +88,12 @@ details{margin-top:14px;border-top:1px solid var(--line);padding-top:12px}summar
 </section>
 
 <section class="card">
-  <div class="head2"><h2>Add-ons</h2><span class="sp"><button id="adstore">Store</button><button id="adup">Upload</button><input id="adfile" type="file" accept=".json,application/json" hidden></span></div>
+  <div class="head2"><h2>Add-ons</h2><span class="sp"><button id="adup">Upload</button><input id="adfile" type="file" accept=".json,application/json" hidden></span></div>
   <div class="sub">Show something else on the bar when the printer has nothing to say: an add-on from the store, a file of your own, or any program on your network.</div>
   <div class="tiles" id="adtiles"></div>
   <div class="line"><label for="adwhen">Show the picked one</label><select id="adwhen" style="width:auto;max-width:100%"><option value="idle">while the printer is not busy with a print</option><option value="always">always, even while printing</option></select><button id="adnone">Show nothing</button></div>
-  <div class="panel" id="storepanel" hidden>
-    <div class="head2" style="margin:0"><h2>Store</h2><span class="sp"><span class="sub" id="storenote"></span><button id="storeclose">Close</button></span></div>
+  <div class="panel" id="storepanel">
+    <div class="head2" style="margin:0"><h2>Store</h2><span class="sp"><span class="sub" id="storenote"></span></span></div>
     <div class="store" id="storelist"></div>
   </div>
   <div class="msg" id="admsg"></div>
@@ -212,8 +212,9 @@ $('adup').onclick=()=>$('adfile').click();
 $('adfile').onchange=async()=>{const file=$('adfile').files[0];$('adfile').value='';if(!file)return;let obj;
   try{obj=JSON.parse(await file.text());}catch(e){$('admsg').textContent='That file is not valid JSON';return;}
   const r=await post('/api/addonfile',{file:obj});$('admsg').textContent=r.ok?'Uploaded. It shows as soon as it has loaded, in place of any add-on file the bar had.':(r.message||'Not accepted');};
+/* Always shown, so there is nothing to find. Read once when the page opens, and again after an add-on is picked so the card it came from says In use. */
 async function openStore(){
-  $('storepanel').hidden=false;$('storenote').textContent='Loading…';
+  if(!$('storelist').children.length)$('storenote').textContent='Loading…';
   let idx;try{idx=await fetch(STORE+'index.json',{cache:'no-store'}).then(r=>{if(!r.ok)throw 0;return r.json();});}
   catch(e){$('storenote').textContent='Could not reach the store: it needs internet on this device';$('storelist').innerHTML='';return;}
   $('storenote').textContent=idx.addons.length+' from GitHub · one at a time';
@@ -223,7 +224,7 @@ async function openStore(){
       +'<div class="d">'+esc(a.description)+'</div><div class="sub">'+(a.author?'by '+esc(a.author):'')+'</div>'
       +'<div class="acts">'+(using?'<button class="go" disabled>In use</button>':'<button data-url="'+esc(url)+'">Use this</button>')+'</div></div>';}).join('');
 }
-$('adstore').onclick=openStore;$('storeclose').onclick=()=>{$('storepanel').hidden=true;};
+openStore();
 $('storelist').onclick=async(e)=>{const b=e.target.closest('button');if(!b||!b.dataset.url)return;b.disabled=true;b.textContent='Adding…';
   const r=await post('/api/addonfile',{url:b.dataset.url});$('admsg').textContent=r.ok?'Added. The bar is fetching it from GitHub.':(r.message||'Not accepted');setTimeout(openStore,3000);};
 function renderUpdate(s){
