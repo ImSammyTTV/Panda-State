@@ -36,11 +36,18 @@
 #include <driver/i2s.h>
 #include <nvs.h>
 #include <esp_ota_ops.h>
+#include <HTTPClient.h>
+#include <memory>
+#include <mbedtls/sha256.h>
 #include "page.h"
+#include "roots.h"
 
 /* What the firmware calls itself on its page and in /api/status. Plain and generic, so it says what it is on anyone's network. */
 #define FW_NAME "panda"
-#define FW_VERSION "0.5.2"
+#define FW_VERSION "0.6.0"
+/* Where new releases and the add-on store live. A release must carry a
+   panda-p2-custom-<version>.bin and a SHA256SUMS.txt that lists it. */
+#define UPDATE_REPO "ImSammyTTV/panda-status-p2-firmware"
 static const char *BUILD_ID = FW_VERSION " " __DATE__ " " __TIME__;
 
 /* Measured, not assumed: see HARDWARE.md. */
@@ -306,6 +313,9 @@ static void loadConfig() {
 static String prIp, prSerial, prCode;
 static SemaphoreHandle_t prLock;              // the three strings above are read by the link's task and written by the web handler
 static volatile bool prRestart = false;       // settings changed: drop the link and start again
+/* Set while a firmware download runs: two TLS sessions at once leave the chip
+   too little memory to be sure of finishing the one that matters. */
+static volatile bool prPaused = false;
 static volatile bool prConnected = false;
 static char prError[48] = "";
 static char prGcode[12] = "";                 // RUNNING, PAUSE, FINISH, IDLE, FAILED, PREPARE ...
@@ -438,6 +448,7 @@ static void printerTask(void *) {
     String ip = prIp, serial = prSerial, code = prCode;
     xSemaphoreGive(prLock);
     prRestart = false;
+    if (prPaused) { prSetError("Paused while a firmware update downloads"); prWait(1000); continue; }
     if (!ip.length() || !serial.length()) { prSetError(""); prWait(2000); continue; }
     if (WiFi.status() != WL_CONNECTED) { prSetError("Waiting for Wi-Fi"); prWait(2000); continue; }
 
@@ -1152,11 +1163,41 @@ static String apPassword() {
   return String(text);
 }
 
+/**
+ * The bar's own Wi-Fi network (access point), as stock had: the way in when
+ * the home network is gone, renamed or mistyped. By default it comes up by
+ * itself after a minute without Wi-Fi and goes away a minute after Wi-Fi is
+ * back; it can be kept on all the time instead. It cannot be switched off for
+ * good: a bar with no Wi-Fi and no hotspot could only be reached over USB.
+ */
+static String apSsid, apPass;
+static bool apAlways = false;
+
+static void loadAp() {
+  apSsid = prefs.getString("apssid", "PandaP2-Setup");
+  apPass = prefs.getString("appass", "");
+  if (apPass.length() < 8) apPass = apPassword();
+  apAlways = prefs.getBool("apalways", false);
+}
+
+static void startAp() {
+  WiFi.mode(WIFI_AP_STA);
+  WiFi.softAP(apSsid.c_str(), apPass.c_str());
+  apUp = true;
+}
+
+static void stopAp() {
+  WiFi.softAPdisconnect(true);
+  WiFi.mode(WIFI_STA);
+  apUp = false;
+}
+
 static void startWifi() {
   WiFi.persistent(false);   // our settings live in our own namespace, not the driver's
   WiFi.mode(WIFI_STA);
   WiFi.setHostname("PandaStatusP2");   // the name stock used, so the router sees the same device
   WiFi.setAutoReconnect(true);
+  loadAp();
   wifiSsid = prefs.getString("ssid", "");
   wifiPass = prefs.getString("pass", "");
   if (!wifiSsid.length()) readStockWifi(wifiSsid, wifiPass);
@@ -1169,7 +1210,7 @@ static void startWifi() {
 static bool onTrial = false;
 static const uint32_t TRIAL_GIVE_UP_MS = 120000;
 static const uint32_t TRIAL_PROVEN_MS = 20000;
-static const uint32_t AP_AFTER_MS = 180000;
+static const uint32_t AP_AFTER_MS = 60000;
 
 static bool otherSlot(const esp_partition_t *&part, esp_app_desc_t &desc) {
   part = esp_ota_get_next_update_partition(nullptr);
@@ -1215,16 +1256,8 @@ static void watchTrial() {
 
   /* A proven build that has lost the network keeps trying, and after a while also offers its own network so the Wi-Fi details can be changed. */
   /* With no network name saved at all (a bar flashed from new) there is nothing to wait for: the setup network comes up at once. */
-  if (!connected && !apUp && (millis() - lostAt > AP_AFTER_MS || !wifiSsid.length())) {
-    WiFi.mode(WIFI_AP_STA);
-    WiFi.softAP("PandaP2-Setup", apPassword().c_str());
-    apUp = true;
-  }
-  if (connected && apUp && !apByButton && millis() - connectedSince > 60000) {
-    WiFi.softAPdisconnect(true);
-    WiFi.mode(WIFI_STA);
-    apUp = false;
-  }
+  if (!apUp && (apAlways || (!connected && (millis() - lostAt > AP_AFTER_MS || !wifiSsid.length())))) startAp();
+  if (connected && apUp && !apByButton && !apAlways && millis() - connectedSince > 60000) stopAp();
   if (!connected && wifiSsid.length() && millis() - lastTryAt > 30000) {
     lastTryAt = millis();
     WiFi.begin(wifiSsid.c_str(), wifiPass.c_str());
@@ -1259,9 +1292,7 @@ static void buttonAction(uint8_t kind) {
     noticeQuarters = mode == MODE_MUSIC ? 4 : 2;
     noticeUntil = millis() + 400;
   } else if (kind == 3 && !apUp) {
-    WiFi.mode(WIFI_AP_STA);
-    WiFi.softAP("PandaP2-Setup", apPassword().c_str());
-    apUp = true;
+    startAp();
     apByButton = true;
     noticeQuarters = 4;
     noticeUntil = millis() + 1500;
@@ -1286,6 +1317,8 @@ static void pollButton() {
   /* A press is not acted on until it is clear a second one is not following it. */
   if (!buttonDown && clicks && millis() - releasedAt > 400) { buttonAction(clicks >= 2 ? 2 : 1); clicks = 0; }
 }
+
+static void onlineToJson(JsonDocument &doc);   // in the online section, below
 
 /* ------------------------------------------------------------- API -- */
 
@@ -1320,6 +1353,17 @@ static void handleStatus() {
   doc["ip"] = WiFi.localIP().toString();
   doc["rssi"] = WiFi.status() == WL_CONNECTED ? WiFi.RSSI() : 0;
   doc["setupNetwork"] = apUp;
+  doc["wifiName"] = WiFi.status() == WL_CONNECTED ? WiFi.SSID() : wifiSsid;
+  doc["wifiConnected"] = WiFi.status() == WL_CONNECTED;
+  /* The hotspot. Its password is sent only while it is still the printed default (which anyone can work out from the MAC address on a label); one the owner chose is never sent back. */
+  JsonObject ap = doc["ap"].to<JsonObject>();
+  ap["up"] = apUp;
+  ap["always"] = apAlways;
+  ap["ssid"] = apSsid;
+  ap["ip"] = WiFi.softAPIP().toString();
+  ap["clients"] = apUp ? WiFi.softAPgetStationNum() : 0;
+  if (apPass == apPassword()) ap["defaultPassword"] = apPass;
+  else ap["defaultPassword"] = nullptr;
   doc["onTrial"] = onTrial;
   doc["leds"] = LED_COUNT;
 
@@ -1357,6 +1401,8 @@ static void handleStatus() {
   const Addon *onBar = mode == MODE_MUSIC || source == SRC_PREVIEW ? nullptr : addonNow(state);
   if (onBar) doc["addonShowing"] = onBar->id;
   else doc["addonShowing"] = nullptr;
+
+  onlineToJson(doc);
 
   /* The microphone: whether the chip answered, how loud the last block was (dB below full scale), and what the meter makes of it. */
   JsonObject mic = doc["mic"].to<JsonObject>();
@@ -1455,31 +1501,43 @@ static void handlePreview() {
  * An add-on saying what it wants shown. See the add-ons note above for the
  * three shapes. {"id":"x","remove":true} takes one away at once.
  */
-static void handleAddon() {
-  JsonDocument doc;
-  if (!readBody(doc)) return;
+static const char *addonIdError(const char *id) {
+  if (!id || !*id || strlen(id) > 15) return "id is 1-15 characters";
+  for (const char *c = id; *c; c++) if (!(islower((unsigned char)*c) || isdigit((unsigned char)*c) || *c == '-' || *c == '_')) return "id uses a-z, 0-9, - and _";
+  return nullptr;
+}
+
+/* Posted add-ons arrive on the web server's task and file add-ons on the online task; both write the same four slots. */
+static SemaphoreHandle_t addonLock;
+
+static Addon *addonSlotFor(const char *id) {
+  Addon *slot = addonById(id);
+  /* A free place, or failing that one whose add-on has stopped posting. The add-on the owner picked is never pushed out by a stranger. */
+  for (int i = 0; i < ADDON_SLOTS && !slot; i++) if (!addons[i].used) slot = &addons[i];
+  for (int i = 0; i < ADDON_SLOTS && !slot; i++) if (!addonFresh(addons[i]) && strcmp(addons[i].id, addonShow) != 0) slot = &addons[i];
+  return slot;
+}
+
+/* Checks an add-on post (or a file add-on's content, which has the same shape) and puts it in its slot. Returns why not, or nullptr. */
+static const char *addonApply(JsonVariantConst doc, bool *picked) {
   const char *id = doc["id"].as<const char *>();
-  if (!id || !*id || strlen(id) > 15) return sendResult(false, "id is 1-15 characters");
-  for (const char *c = id; *c; c++) if (!(islower((unsigned char)*c) || isdigit((unsigned char)*c) || *c == '-' || *c == '_')) return sendResult(false, "id uses a-z, 0-9, - and _");
+  if (const char *bad = addonIdError(id)) return bad;
+  xSemaphoreTake(addonLock, portMAX_DELAY);
+  const char *error = nullptr;
   Addon *slot = addonById(id);
   if (doc["remove"].as<bool>()) {
     if (slot) slot->used = false;
-    return sendResult(true);
-  }
-  if (!slot) {
-    /* A free place, or failing that one whose add-on has stopped posting. The add-on the owner picked is never pushed out by a stranger. */
-    for (int i = 0; i < ADDON_SLOTS && !slot; i++) if (!addons[i].used) slot = &addons[i];
-    for (int i = 0; i < ADDON_SLOTS && !slot; i++) if (!addonFresh(addons[i]) && strcmp(addons[i].id, addonShow) != 0) slot = &addons[i];
-    if (!slot) return sendResult(false, "Four add-ons are already posting; remove one first");
-  }
-
+  } else if (!(slot = addonSlotFor(id))) {
+    error = "Four add-ons are already posting; remove one first";
+  } else {
+    error = [&]() -> const char * {
   Addon next = {};
   next.used = true;
   strlcpy(next.id, id, sizeof next.id);
   const char *name = doc["name"].as<const char *>();
   strlcpy(next.name, name && *name ? name : id, sizeof next.name);
   const int ttl = doc["ttl"].isNull() ? 120 : doc["ttl"].as<int>();
-  if (ttl < 1 || ttl > 3600) return sendResult(false, "ttl is 1-3600 seconds");
+  if (ttl < 1 || ttl > 3600) return "ttl is 1-3600 seconds";
   next.ttlMs = (uint32_t)ttl * 1000;
   next.at = millis();
 
@@ -1492,16 +1550,16 @@ static void handleAddon() {
       /* Either a list of 25 "#RRGGBB", or the same as one run of 150 hex digits. */
       const bool ok = hex ? (strlen(hex) == LED_COUNT * 6 && parseColour(hex + i * 6, colour))
                           : (list.size() == LED_COUNT && parseColour(list[i].as<const char *>(), colour));
-      if (!ok) return sendResult(false, "frame is 25 colours: a list of #RRGGBB, or 150 hex digits");
+      if (!ok) return "frame is 25 colours: a list of #RRGGBB, or 150 hex digits";
       next.pixels[i][0] = (colour >> 16) & 255; next.pixels[i][1] = (colour >> 8) & 255; next.pixels[i][2] = colour & 255;
     }
   } else if (!doc["meters"].isNull()) {
     next.kind = ADDON_METERS;
     JsonArrayConst list = doc["meters"].as<JsonArrayConst>();
-    if (list.size() < 1 || list.size() > 4) return sendResult(false, "meters is a list of 1-4");
+    if (list.size() < 1 || list.size() > 4) return "meters is a list of 1-4";
     for (JsonVariantConst one : list) {
       uint32_t colour = 0xFFFFFF;
-      if (!one["colour"].isNull() && !parseColour(one["colour"].as<const char *>(), colour)) return sendResult(false, "Colour must be #RRGGBB");
+      if (!one["colour"].isNull() && !parseColour(one["colour"].as<const char *>(), colour)) return "Colour must be #RRGGBB";
       next.meterColour[next.meterCount] = colour;
       next.meterValue[next.meterCount] = constrain(one["value"].as<float>(), 0.0f, 100.0f);
       next.meterCount++;
@@ -1510,24 +1568,36 @@ static void handleAddon() {
     next.kind = ADDON_LOOK;
     JsonVariantConst look = doc["look"];
     next.look = {0xFFFFFF, FX_SOLID, 50};
-    if (!look["colour"].isNull() && !parseColour(look["colour"].as<const char *>(), next.look.colour)) return sendResult(false, "Colour must be #RRGGBB");
-    if (!look["colour2"].isNull() && !parseColour(look["colour2"].as<const char *>(), next.look.colour2)) return sendResult(false, "Second colour must be #RRGGBB");
+    if (!look["colour"].isNull() && !parseColour(look["colour"].as<const char *>(), next.look.colour)) return "Colour must be #RRGGBB";
+    if (!look["colour2"].isNull() && !parseColour(look["colour2"].as<const char *>(), next.look.colour2)) return "Second colour must be #RRGGBB";
     if (!look["effect"].isNull()) {
       int fx = findName(FX_NAMES, FX_COUNT, look["effect"].as<const char *>());
-      if (fx < 0) return sendResult(false, "Unknown effect");
+      if (fx < 0) return "Unknown effect";
       next.look.effect = fx;
     }
     if (!look["speed"].isNull()) next.look.speed = constrain(look["speed"].as<int>(), 1, 100);
     next.fill = look["progress"].isNull() ? 100 : constrain(look["progress"].as<float>(), 0.0f, 100.0f);
   } else {
-    return sendResult(false, "Send one of look, meters or frame");
+    return "Send one of look, meters or frame";
   }
   *slot = next;
+  return nullptr;
+    }();
+  }
+  xSemaphoreGive(addonLock);
+  if (picked) *picked = strcmp(addonShow, id) == 0;
+  return error;
+}
 
+static void handleAddon() {
+  JsonDocument doc;
+  if (!readBody(doc)) return;
+  bool picked = false;
+  if (const char *error = addonApply(doc.as<JsonVariantConst>(), &picked)) return sendResult(false, error);
   JsonDocument answer;
   answer["ok"] = true;
   /* So a script can tell whether it is the one on the bar right now, and say so to whoever runs it. */
-  answer["picked"] = strcmp(addonShow, id) == 0;
+  answer["picked"] = picked;
   sendJson(200, answer);
 }
 
@@ -1541,6 +1611,10 @@ static const char API_DOC[] PROGMEM = R"JSON({"about":"Panda Status P2 custom fi
 {"call":"POST /api/preview","body":{"state":"<state>","progress":"0-100","seconds":"1-120"},"does":"Show a state briefly without it counting as the printer's"},
 {"call":"POST /api/printer","body":{"ip":"...","serial":"...","code":"..."},"does":"Pair with a Bambu printer; {forget:true} unpairs"},
 {"call":"POST /api/wifi","body":{"ssid":"...","password":"..."},"does":"Save Wi-Fi and restart"},
+{"call":"GET /api/wifi/scan","does":"Networks in range. The first call starts a scan and answers {scanning:true}; ask again for {networks:[{ssid,rssi,open}]}. ?again starts a fresh one"},
+{"call":"POST /api/ap","body":{"always":"true|false","ssid":"1-32","password":"8-63, or empty for the default"},"does":"The bar's own hotspot: by default it comes up after a minute without Wi-Fi; always keeps it on. At 192.168.4.1"},
+{"call":"POST /api/addonfile","body":{"url":"https://... an add-on file to fetch at every start","file":"or the add-on file itself, up to 4000 characters","remove":true},"does":"An add-on the bar runs itself: look, meters or frame as above, or frames {fps, list} for an animation, or source {url, path, min, max, colour, every} for a live meter read from a web address. It is shown as soon as it loads. Its state is in /api/status under addonFile"},
+{"call":"POST /api/update","body":{"check":true,"install":true,"auto":"true|false"},"does":"Look for a newer release on GitHub, or install it (checked against the release's SHA256SUMS, into the other slot, on trial). auto: look once a day and say so on the page; it never installs by itself. Progress is in /api/status under update"},
 {"call":"POST /update","body":"multipart file","does":"Install a firmware .bin into the other slot and restart into it"},
 {"call":"POST /api/slot | /api/reboot | /api/factory","does":"Start the other slot's firmware | restart | clear this firmware's settings"}
 ]})JSON";
@@ -1557,6 +1631,58 @@ static void handleWifi() {
   sendResult(true, "Saved. Restarting to join it.");
   delay(500);
   ESP.restart();
+}
+
+/* The bar's own network: {"always":bool, "ssid":"...", "password":"8-63 characters"}, any subset. */
+static void handleAp() {
+  JsonDocument doc;
+  if (!readBody(doc)) return;
+  if (!doc["ssid"].isNull()) {
+    const String ssid = doc["ssid"] | "";
+    if (!ssid.length() || ssid.length() > 32) return sendResult(false, "The hotspot's name is 1-32 characters");
+    prefs.putString("apssid", ssid);
+  }
+  if (!doc["password"].isNull()) {
+    const String pass = doc["password"] | "";
+    /* WPA2 needs 8; an open hotspot would let anyone nearby change the bar's Wi-Fi. Empty goes back to the default. */
+    if (pass.length() && (pass.length() < 8 || pass.length() > 63)) return sendResult(false, "The hotspot's password is 8-63 characters (or empty for the default)");
+    if (pass.length()) prefs.putString("appass", pass); else prefs.remove("appass");
+  }
+  if (!doc["always"].isNull()) prefs.putBool("apalways", doc["always"].as<bool>());
+  loadAp();
+  /* Applied now. "Always" starts it; back to fallback with Wi-Fi working takes it down; otherwise one that is up restarts with the new name and password. */
+  const char *said = "Saved";
+  if (apAlways) { startAp(); said = "Saved. The hotspot is on."; }
+  else if (apUp && !apByButton && WiFi.status() == WL_CONNECTED) { stopAp(); said = "Saved. The hotspot is off while Wi-Fi works."; }
+  else if (apUp) { startAp(); said = "Saved. The hotspot restarted with these settings."; }
+  sendResult(true, said);
+}
+
+/* Networks in range, for the Wi-Fi card. The first call starts a scan; the page asks again until it has finished. */
+static void handleWifiScan() {
+  const int16_t found = WiFi.scanComplete();
+  JsonDocument doc;
+  if (found == WIFI_SCAN_RUNNING) { doc["scanning"] = true; return sendJson(200, doc); }
+  if (found < 0 || server.hasArg("again")) {
+    WiFi.scanDelete();
+    WiFi.scanNetworks(true);
+    doc["scanning"] = true;
+    return sendJson(200, doc);
+  }
+  JsonArray list = doc["networks"].to<JsonArray>();
+  for (int i = 0; i < found; i++) {
+    const String ssid = WiFi.SSID(i);
+    if (!ssid.length()) continue;
+    bool seen = false;
+    for (JsonVariantConst one : list) if (ssid == one["ssid"].as<const char *>()) { seen = true; break; }
+    if (seen) continue;   // the same network from several access points: the strongest comes first
+    JsonObject one = list.add<JsonObject>();
+    one["ssid"] = ssid;
+    one["rssi"] = WiFi.RSSI(i);
+    one["open"] = WiFi.encryptionType(i) == WIFI_AUTH_OPEN;
+  }
+  WiFi.scanDelete();
+  sendJson(200, doc);
 }
 
 /* Pair with a printer, or {"forget":true} to unpair. The link's task picks the change up by itself. */
@@ -1630,6 +1756,506 @@ static void handleUpdateChunk() {
   }
 }
 
+/* ---------------------------------------------------------- online -- */
+
+/**
+ * Everything that reaches out to the internet: checking GitHub for a newer
+ * release and installing it, and add-ons that are a file rather than a
+ * program on the network. One task does all of it, so a slow server never
+ * freezes the LEDs or the page, and only one HTTPS session runs at a time.
+ *
+ * HTTPS is checked against the root certificates in roots.h, never skipped:
+ * a firmware image from a server that could not prove who it is would be the
+ * one thing worse than no update at all. The image is also checked against
+ * the release's SHA256SUMS.txt before it is allowed to boot.
+ */
+
+/* An HTTP(S) GET that follows redirects (GitHub's downloads always redirect). */
+struct Fetch {
+  WiFiClientSecure tls;
+  WiFiClient plain;
+  HTTPClient http;
+  int begin(const String &url, uint32_t timeoutMs = 15000) {
+    const bool secure = url.startsWith("https://");
+    if (secure) { tls.setCACert(ROOT_CAS); tls.setHandshakeTimeout(12); }
+    http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+    http.setRedirectLimit(5);
+    http.setTimeout(timeoutMs);
+    http.setUserAgent("panda-p2-firmware/" FW_VERSION);
+    if (!(secure ? http.begin(tls, url) : http.begin(plain, url))) return -1;
+    http.addHeader("Accept", "application/json, */*");
+    return http.GET();
+  }
+  ~Fetch() { http.end(); }
+};
+
+static String fetchError(int code) {
+  if (code > 0) return "The server answered " + String(code);
+  if (code == HTTPC_ERROR_CONNECTION_REFUSED) return "Could not connect (no internet, or the server's certificate was not trusted)";
+  return "Could not reach the server (" + HTTPClient::errorToString(code) + ")";
+}
+
+/* "v0.6.1" against "0.6.0": numbers compared part by part. */
+static bool versionNewer(const char *latest, const char *current) {
+  int a[3] = {0, 0, 0}, b[3] = {0, 0, 0};
+  sscanf(latest + (latest[0] == 'v' || latest[0] == 'V'), "%d.%d.%d", &a[0], &a[1], &a[2]);
+  sscanf(current, "%d.%d.%d", &b[0], &b[1], &b[2]);
+  for (int i = 0; i < 3; i++) if (a[i] != b[i]) return a[i] > b[i];
+  return false;
+}
+
+enum UpdPhase : uint8_t { UPD_IDLE, UPD_CHECKING, UPD_CURRENT, UPD_AVAILABLE, UPD_DOWNLOADING, UPD_DONE, UPD_FAILED };
+static const char *UPD_NAMES[] = {"idle", "checking", "current", "available", "downloading", "installed", "failed"};
+static volatile uint8_t updPhase = UPD_IDLE;
+static volatile uint8_t updPercent = 0;
+static volatile uint8_t updWant = 0;              // 1 check, 2 install: asked for by the page, done by the online task
+static char updLatest[24] = "";
+static String updAssetName, updAssetUrl, updSumsUrl, updPageUrl, updMessage;
+static uint32_t updCheckedAt = 0;                // millis() of the last answer from GitHub; 0 never
+static bool updAuto = true;                      // look once a day and say so on the page; never installs by itself
+
+static bool updCheck() {
+  updPhase = UPD_CHECKING;
+  Fetch f;
+  const int code = f.begin("https://api.github.com/repos/" UPDATE_REPO "/releases/latest");
+  if (code != 200) { updMessage = code == 404 ? String("No release published yet") : fetchError(code); updPhase = UPD_FAILED; return false; }
+  JsonDocument filter;
+  filter["tag_name"] = true;
+  filter["html_url"] = true;
+  filter["assets"][0]["name"] = true;
+  filter["assets"][0]["browser_download_url"] = true;
+  JsonDocument doc;
+  if (deserializeJson(doc, f.http.getString(), DeserializationOption::Filter(filter))) { updMessage = "GitHub's answer could not be read"; updPhase = UPD_FAILED; return false; }
+  strlcpy(updLatest, doc["tag_name"] | "", sizeof updLatest);
+  updPageUrl = doc["html_url"] | "";
+  updAssetName = updAssetUrl = updSumsUrl = "";
+  for (JsonVariantConst a : doc["assets"].as<JsonArrayConst>()) {
+    String name = a["name"] | "";
+    if (name.startsWith("panda-p2-custom-") && name.endsWith(".bin")) { updAssetName = name; updAssetUrl = a["browser_download_url"] | ""; }
+    if (name == "SHA256SUMS.txt") updSumsUrl = a["browser_download_url"] | "";
+  }
+  updCheckedAt = millis();
+  if (!versionNewer(updLatest, FW_VERSION)) { updMessage = ""; updPhase = UPD_CURRENT; return true; }
+  if (!updAssetUrl.length() || !updSumsUrl.length()) { updMessage = String("Release ") + updLatest + " has no firmware file or checksum list"; updPhase = UPD_FAILED; return false; }
+  updMessage = "";
+  updPhase = UPD_AVAILABLE;
+  return true;
+}
+
+static bool updFail(const String &why) {
+  updMessage = why;
+  updPhase = UPD_FAILED;
+  prPaused = false;
+  prRestart = true;
+  return false;
+}
+
+static bool updInstall() {
+  if (updPhase != UPD_AVAILABLE && !updCheck()) return false;
+  if (updPhase != UPD_AVAILABLE) return updFail("Already on the newest release");
+
+  /* The expected checksum first: a list a few lines long. */
+  String expected;
+  {
+    Fetch f;
+    const int code = f.begin(updSumsUrl);
+    if (code != 200) return updFail("Checksum list: " + fetchError(code));
+    const String sums = f.http.getString();
+    const int at = sums.indexOf(updAssetName);
+    if (at < 0) return updFail("The checksum list does not mention " + updAssetName);
+    const int lineStart = sums.lastIndexOf('\n', at) + 1;
+    expected = sums.substring(lineStart, lineStart + 64);
+    expected.toLowerCase();
+    if (expected.length() != 64) return updFail("The checksum list could not be read");
+  }
+
+  updPhase = UPD_DOWNLOADING;
+  updPercent = 0;
+  prPaused = true;
+  prRestart = true;
+  vTaskDelay(pdMS_TO_TICKS(1500));   // let the printer link close and give its memory back
+
+  Fetch f;
+  const int code = f.begin(updAssetUrl, 20000);
+  if (code != 200) return updFail("Download: " + fetchError(code));
+  const int total = f.http.getSize();
+  if (total <= 0) return updFail("The download did not say how big it is");
+  if (!Update.begin(total)) return updFail(String("Will not fit: ") + Update.errorString());
+
+  mbedtls_sha256_context sha;
+  mbedtls_sha256_init(&sha);
+  mbedtls_sha256_starts_ret(&sha, 0);
+  WiFiClient *stream = f.http.getStreamPtr();
+  static uint8_t buf[2048];
+  int written = 0;
+  uint32_t lastByteAt = millis();
+  while (written < total) {
+    const int ready = stream->available();
+    if (ready <= 0) {
+      if (millis() - lastByteAt > 20000) { Update.abort(); mbedtls_sha256_free(&sha); return updFail("The download stalled"); }
+      vTaskDelay(pdMS_TO_TICKS(5));
+      continue;
+    }
+    const int n = stream->readBytes(buf, min(ready, (int)sizeof buf));
+    if (n <= 0) continue;
+    lastByteAt = millis();
+    mbedtls_sha256_update_ret(&sha, buf, n);
+    if (Update.write(buf, n) != (size_t)n) { Update.abort(); mbedtls_sha256_free(&sha); return updFail(String("Writing failed: ") + Update.errorString()); }
+    written += n;
+    updPercent = (uint8_t)((int64_t)written * 100 / total);
+  }
+  uint8_t digest[32];
+  mbedtls_sha256_finish_ret(&sha, digest);
+  mbedtls_sha256_free(&sha);
+  char hex[65];
+  for (int i = 0; i < 32; i++) snprintf(hex + i * 2, 3, "%02x", digest[i]);
+  if (expected != hex) { Update.abort(); return updFail("The download did not match its checksum, so it was not installed"); }
+  /* Writes the boot record: the new build starts next, on trial, and hands
+     the bar back to this one by itself if it cannot get on Wi-Fi. */
+  if (!Update.end()) return updFail(String("Could not finish: ") + Update.errorString());
+  updMessage = String("Installed ") + updLatest + ". Restarting into it.";
+  updPhase = UPD_DONE;
+  vTaskDelay(pdMS_TO_TICKS(1500));
+  ESP.restart();
+  return true;
+}
+
+/* -------------------------------------------------- file add-ons -- */
+
+/**
+ * An add-on that is a file instead of a program: a few hundred bytes of JSON
+ * the bar runs itself, uploaded from the page or picked from the store. A
+ * store add-on is fetched from its address every time the bar starts and only
+ * the address is kept, so the bar holds no library of them.
+ *
+ *   { "id": "aurora", "name": "Aurora", "description": "...", "author": "...",
+ *     and ONE of:
+ *     "look" | "meters" | "frame"   exactly as POST /api/addon takes them
+ *     "frames": { "fps": 1-20, "list": ["150 hex digits", ...] }   up to 30, looped
+ *     "source": { "url": "https://...", "path": "a.b.0.c", "min": 0, "max": 100,
+ *                 "colour": "#RRGGBB", "every": 30-86400 }   a live meter
+ *   }
+ */
+enum FileKind : uint8_t { FA_NONE, FA_STATIC, FA_FRAMES, FA_SOURCE };
+static const char *FA_NAMES[] = {"none", "static", "frames", "source"};
+static const int FA_MAX_FRAMES = 30;
+static const size_t FA_MAX_UPLOAD = 4000;         // what fits comfortably in the settings store
+static const size_t FA_MAX_FETCH = 12000;
+static volatile bool faReload = true;
+static bool faPick = false;                      // show it as soon as it loads (it was just installed)
+static uint8_t faKind = FA_NONE;
+static char faId[16] = "", faName[28] = "", faAuthor[40] = "";
+static String faUrl, faDesc, faError, faShow, faSrcUrl, faPath;
+static uint8_t faFrames[FA_MAX_FRAMES][LED_COUNT][3];
+static uint8_t faFrameCount = 0, faFps = 4, faFrameAt = 0;
+static float faMin = 0, faMax = 100, faValue = NAN;
+static uint32_t faColour = 0xFFFFFF, faEveryMs = 300000, faFetchedAt = 0, faPushedAt = 0, faTriedAt = 0;
+static uint32_t faRetryAt = 0;                   // a failed fetch of a store add-on waits until then
+
+static bool hexPixels(const char *hex, uint8_t out[LED_COUNT][3]) {
+  if (!hex || strlen(hex) != LED_COUNT * 6) return false;
+  for (int i = 0; i < LED_COUNT; i++) {
+    uint32_t c;
+    if (!parseColour(hex + i * 6, c)) return false;
+    out[i][0] = (c >> 16) & 255; out[i][1] = (c >> 8) & 255; out[i][2] = c & 255;
+  }
+  return true;
+}
+
+/* Reads a definition and gets it ready to run. Returns why not, or nullptr. */
+static const char *faLoad(const String &text) {
+  JsonDocument doc;
+  if (deserializeJson(doc, text)) return "The add-on file is not valid JSON";
+  const char *id = doc["id"].as<const char *>();
+  if (const char *bad = addonIdError(id)) return bad;
+  strlcpy(faId, id, sizeof faId);
+  strlcpy(faName, doc["name"] | id, sizeof faName);
+  strlcpy(faAuthor, doc["author"] | "", sizeof faAuthor);
+  faDesc = doc["description"] | "";
+  faKind = FA_NONE;
+  faValue = NAN;
+  faFetchedAt = faPushedAt = 0;
+
+  if (!doc["frames"].isNull()) {
+    JsonArrayConst list = doc["frames"]["list"].as<JsonArrayConst>();
+    if (list.size() < 1 || list.size() > FA_MAX_FRAMES) return "frames.list holds 1-30 frames";
+    faFrameCount = 0;
+    for (JsonVariantConst one : list)
+      if (!hexPixels(one.as<const char *>(), faFrames[faFrameCount++])) return "Each frame is 150 hex digits (25 colours)";
+    faFps = constrain(doc["frames"]["fps"] | 4, 1, 20);
+    faFrameAt = 0;
+    faKind = FA_FRAMES;
+  } else if (!doc["source"].isNull()) {
+    JsonVariantConst src = doc["source"];
+    faSrcUrl = src["url"] | "";
+    if (!faSrcUrl.startsWith("http://") && !faSrcUrl.startsWith("https://")) return "source.url must be an http:// or https:// address";
+    faPath = src["path"] | "";
+    faMin = src["min"] | 0.0f;
+    faMax = src["max"] | 100.0f;
+    if (faMax == faMin) return "source.min and source.max must differ";
+    faColour = 0xFFFFFF;
+    if (!src["colour"].isNull() && !parseColour(src["colour"].as<const char *>(), faColour)) return "source.colour must be #RRGGBB";
+    faEveryMs = (uint32_t)constrain(src["every"] | 300, 30, 86400) * 1000;
+    faKind = FA_SOURCE;
+  } else {
+    /* Same shape as a post: check it the same way, through the same code. */
+    JsonDocument show;
+    show["id"] = faId;
+    show["name"] = faName;
+    show["ttl"] = 120;
+    for (const char *key : {"look", "meters", "frame"}) if (!doc[key].isNull()) show[key] = doc[key];
+    if (show.size() <= 3) return "Give one of look, meters, frame, frames or source";
+    if (const char *bad = addonApply(show.as<JsonVariantConst>(), nullptr)) return bad;
+    faShow = "";
+    serializeJson(show, faShow);
+    faPushedAt = millis();
+    faKind = FA_STATIC;
+  }
+  return nullptr;
+}
+
+/* A number out of a JSON answer, by a path like "data.0.price"; an empty path means the answer is the number. */
+static bool faFetchValue(float &out) {
+  Fetch f;
+  const int code = f.begin(faSrcUrl);
+  if (code != 200) { faError = fetchError(code); return false; }
+  const int size = f.http.getSize();
+  if (size > 32768) { faError = "The answer is too big for the bar (over 32 KB)"; return false; }
+  const String body = f.http.getString();
+  if (!faPath.length()) {
+    char *end = nullptr;
+    out = strtof(body.c_str(), &end);
+    if (end == body.c_str()) { faError = "The answer is not a number"; return false; }
+    return true;
+  }
+  /* Only the path is kept from the answer, so a large reply costs little memory. */
+  JsonDocument filter;
+  JsonVariant cursor = filter.to<JsonVariant>();
+  int from = 0;
+  while (from <= (int)faPath.length()) {
+    int dot = faPath.indexOf('.', from);
+    if (dot < 0) dot = faPath.length();
+    const String part = faPath.substring(from, dot);
+    const bool index = part.length() && strspn(part.c_str(), "0123456789") == part.length();
+    cursor = index ? cursor.to<JsonArray>().add<JsonVariant>() : cursor.to<JsonObject>()[part].to<JsonVariant>();
+    from = dot + 1;
+  }
+  cursor.set(true);
+  JsonDocument doc;
+  if (deserializeJson(doc, body, DeserializationOption::Filter(filter))) { faError = "The answer is not JSON"; return false; }
+  JsonVariantConst v = doc.as<JsonVariantConst>();
+  from = 0;
+  while (from <= (int)faPath.length() && !v.isNull()) {
+    int dot = faPath.indexOf('.', from);
+    if (dot < 0) dot = faPath.length();
+    const String part = faPath.substring(from, dot);
+    const bool index = part.length() && strspn(part.c_str(), "0123456789") == part.length();
+    v = index ? v[part.toInt()] : v[part];
+    from = dot + 1;
+  }
+  if (v.is<float>()) { out = v.as<float>(); return true; }
+  if (v.is<const char *>()) {
+    char *end = nullptr;
+    const char *text = v.as<const char *>();
+    out = strtof(text, &end);
+    if (end != text) return true;
+  }
+  faError = "Nothing numeric at \"" + faPath + "\"";
+  return false;
+}
+
+static void faRemove() {
+  if (faId[0]) {
+    JsonDocument gone;
+    gone["id"] = faId;
+    gone["remove"] = true;
+    addonApply(gone.as<JsonVariantConst>(), nullptr);
+  }
+  faKind = FA_NONE;
+  faId[0] = faName[0] = faAuthor[0] = 0;
+  faDesc = faError = faShow = "";
+}
+
+/* One step of the file add-on: load it if needed, then keep it on the bar. */
+static void faTick() {
+  if (faReload) {
+    const String url = prefs.getString("faurl", "");
+    /* Nothing is taken down until the new one can actually be fetched. */
+    if (url.length() && WiFi.status() != WL_CONNECTED) { faError = "Waiting for Wi-Fi to fetch it"; return; }
+    faReload = false;
+    faRemove();
+    faUrl = url;
+    String text;
+    if (!faUrl.length()) {
+      const size_t size = prefs.getBytesLength("fajson");
+      if (size && size <= FA_MAX_UPLOAD) {
+        std::unique_ptr<char[]> buf(new char[size + 1]);
+        prefs.getBytes("fajson", buf.get(), size);
+        buf[size] = 0;
+        text = buf.get();
+      }
+    }
+    if (faUrl.length()) {
+      Fetch f;
+      const int code = f.begin(faUrl);
+      if (code != 200) { faError = "Fetching it: " + fetchError(code) + ". Trying again in a minute."; faReload = true; faRetryAt = millis() + 60000; return; }
+      if (f.http.getSize() > (int)FA_MAX_FETCH) { faError = "The add-on file is too big"; faPick = false; return; }
+      text = f.http.getString();
+    }
+    if (!text.length()) { faPick = false; return; }
+    if (const char *bad = faLoad(text)) { faError = bad; faKind = FA_NONE; faPick = false; return; }
+    faError = "";
+    if (faPick) {
+      faPick = false;
+      strlcpy(addonShow, faId, sizeof addonShow);
+      saveConfig();
+    }
+  }
+  const uint32_t now = millis();
+  if (faKind == FA_STATIC && now - faPushedAt > 30000) {
+    JsonDocument show;
+    if (!deserializeJson(show, faShow)) addonApply(show.as<JsonVariantConst>(), nullptr);
+    faPushedAt = now;
+  } else if (faKind == FA_FRAMES && now - faPushedAt >= 1000u / faFps) {
+    xSemaphoreTake(addonLock, portMAX_DELAY);
+    if (Addon *slot = addonSlotFor(faId)) {
+      Addon next = {};
+      next.used = true;
+      strlcpy(next.id, faId, sizeof next.id);
+      strlcpy(next.name, faName, sizeof next.name);
+      next.at = now;
+      next.ttlMs = 10000;
+      next.kind = ADDON_FRAME;
+      memcpy(next.pixels, faFrames[faFrameAt], sizeof next.pixels);
+      *slot = next;
+    }
+    xSemaphoreGive(addonLock);
+    faFrameAt = (faFrameAt + 1) % faFrameCount;
+    faPushedAt = now;
+  } else if (faKind == FA_SOURCE) {
+    if ((!faFetchedAt || now - faFetchedAt >= faEveryMs) && now - faTriedAt > 30000 && WiFi.status() == WL_CONNECTED) {
+      faTriedAt = now;
+      float value;
+      if (faFetchValue(value)) { faValue = value; faFetchedAt = now; faError = ""; }
+    }
+    if (!isnan(faValue) && now - faPushedAt > 15000) {
+      JsonDocument show;
+      show["id"] = faId;
+      show["name"] = faName;
+      show["ttl"] = max<uint32_t>(120, faEveryMs / 1000 * 3);
+      JsonObject meter = show["meters"].to<JsonArray>().add<JsonObject>();
+      meter["value"] = constrain((faValue - faMin) / (faMax - faMin) * 100.0f, 0.0f, 100.0f);
+      char colour[8];
+      snprintf(colour, sizeof colour, "#%06lX", (unsigned long)faColour);
+      meter["colour"] = colour;
+      addonApply(show.as<JsonVariantConst>(), nullptr);
+      faPushedAt = now;
+    }
+  }
+}
+
+static void onlineTask(void *) {
+  uint32_t onlineSince = 0;
+  for (;;) {
+    const bool online = WiFi.status() == WL_CONNECTED;
+    if (!online) onlineSince = 0;
+    else if (!onlineSince) onlineSince = millis();
+
+    if (updWant == 1) { updWant = 0; if (online) updCheck(); else { updMessage = "Not on Wi-Fi"; updPhase = UPD_FAILED; } }
+    if (updWant == 2) { updWant = 0; if (online) updInstall(); else { updMessage = "Not on Wi-Fi"; updPhase = UPD_FAILED; } }
+    /* Once a day, a couple of minutes after joining Wi-Fi: only to say on the page that there is one. */
+    if (updAuto && online && onlineSince && millis() - onlineSince > 120000 && updPhase != UPD_DOWNLOADING
+        && (!updCheckedAt || millis() - updCheckedAt > 86400000UL) && millis() - updCheckedAt > 600000UL) {
+      updCheck();
+      if (!updCheckedAt) updCheckedAt = millis();   // a failed daily look waits its turn rather than retrying every pass
+    }
+    if (!faReload || (int32_t)(millis() - faRetryAt) >= 0) faTick();
+    vTaskDelay(pdMS_TO_TICKS(faKind == FA_FRAMES ? 20 : 250));
+  }
+}
+
+/* What the page shows about the file add-on and about updates. */
+static void onlineToJson(JsonDocument &doc) {
+  /* The file add-on, if there is one: where it came from and how it is doing. */
+  JsonObject file = doc["addonFile"].to<JsonObject>();
+  file["from"] = faUrl.length() ? "store" : prefs.isKey("fajson") ? "upload" : "";
+  file["url"] = faUrl;
+  file["id"] = faId;
+  file["name"] = faName;
+  file["author"] = faAuthor;
+  file["description"] = faDesc;
+  file["kind"] = FA_NAMES[faKind];
+  file["loading"] = (bool)faReload;
+  file["error"] = faError;
+  if (faKind == FA_SOURCE && !isnan(faValue)) file["value"] = faValue;
+
+  /* Updates from GitHub. */
+  JsonObject upd = doc["update"].to<JsonObject>();
+  upd["phase"] = UPD_NAMES[updPhase];
+  upd["latest"] = updLatest;
+  upd["percent"] = updPercent;
+  upd["message"] = updMessage;
+  upd["page"] = updPageUrl;
+  upd["auto"] = updAuto;
+  upd["repo"] = UPDATE_REPO;
+  if (updCheckedAt) upd["checkedAgo"] = (millis() - updCheckedAt) / 1000;
+  else upd["checkedAgo"] = nullptr;
+}
+
+static void handleUpdateApi() {
+  JsonDocument doc;
+  if (!readBody(doc)) return;
+  if (!doc["auto"].isNull()) { updAuto = doc["auto"].as<bool>(); prefs.putBool("updauto", updAuto); }
+  if (doc["check"].as<bool>()) updWant = 1;
+  if (doc["install"].as<bool>()) {
+    if (updPhase == UPD_DOWNLOADING) return sendResult(false, "Already installing");
+    updWant = 2;
+  }
+  sendResult(true);
+}
+
+static void handleAddonFile() {
+  JsonDocument doc;
+  if (!readBody(doc)) return;
+  if (doc["remove"].as<bool>()) {
+    prefs.remove("faurl");
+    prefs.remove("fajson");
+    if (faId[0] && strcmp(addonShow, faId) == 0) { addonShow[0] = 0; saveConfig(); }
+    faReload = true;
+    faRetryAt = millis();
+    return sendResult(true, "Removed");
+  }
+  if (!doc["url"].isNull()) {
+    const String url = doc["url"] | "";
+    if (!url.startsWith("https://") || url.length() > 300) return sendResult(false, "The add-on's address must start with https://");
+    prefs.putString("faurl", url);
+    prefs.remove("fajson");
+  } else if (!doc["file"].isNull()) {
+    String text;
+    serializeJson(doc["file"], text);
+    if (text.length() > FA_MAX_UPLOAD) return sendResult(false, "The file is over 4,000 characters; host it and use its address instead");
+    /* Checked before it is kept, so a broken file never replaces a working one. */
+    JsonDocument probe;
+    deserializeJson(probe, text);
+    if (const char *bad = addonIdError(probe["id"].as<const char *>())) return sendResult(false, bad);
+    if (probe["look"].isNull() && probe["meters"].isNull() && probe["frame"].isNull() && probe["frames"].isNull() && probe["source"].isNull())
+      return sendResult(false, "Give one of look, meters, frame, frames or source");
+    /* Kept as bytes, not a string: a string must fit in one page of the
+       settings store, and a 1.8 KB animation did not (measured, 0.5.9). */
+    if (prefs.putBytes("fajson", text.c_str(), text.length()) != text.length()) {
+      prefs.remove("fajson");
+      return sendResult(false, "The bar has no room left to keep this file; host it and use its address instead");
+    }
+    prefs.remove("faurl");
+  } else {
+    return sendResult(false, "Send url, file or remove");
+  }
+  faPick = true;
+  faReload = true;
+  faRetryAt = millis();
+  sendResult(true, "Loading");
+}
+
 /* ------------------------------------------------------------ main -- */
 
 void setup() {
@@ -1645,6 +2271,8 @@ void setup() {
   applyTimeZone();
 
   prLock = xSemaphoreCreateMutex();
+  addonLock = xSemaphoreCreateMutex();
+  updAuto = prefs.getBool("updauto", true);
   if (prefs.getBool("pset", false)) {
     prIp = prefs.getString("pip", "");
     prSerial = prefs.getString("psn", "");
@@ -1662,6 +2290,8 @@ void setup() {
     xTaskCreate(audioTask, "audio", 6144, nullptr, 1, nullptr);
   }
   pinMode(PIN_BUTTON, INPUT_PULLUP);
+  /* GitHub and file add-ons. Its own task for the same reason as the printer's: HTTPS blocks for seconds. */
+  xTaskCreate(onlineTask, "online", 14336, nullptr, 1, nullptr);
 
   server.on("/", HTTP_GET, []() { server.send_P(200, "text/html", PAGE); });
   server.on("/api/status", HTTP_GET, handleStatus);
@@ -1675,6 +2305,10 @@ void setup() {
   server.on("/api/slot", HTTP_POST, handleSlot);
   server.on("/api/reboot", HTTP_POST, handleReboot);
   server.on("/api/factory", HTTP_POST, handleFactory);
+  server.on("/api/addonfile", HTTP_POST, handleAddonFile);
+  server.on("/api/ap", HTTP_POST, handleAp);
+  server.on("/api/wifi/scan", HTTP_GET, handleWifiScan);
+  server.on("/api/update", HTTP_POST, handleUpdateApi);
   server.on("/update", HTTP_POST, handleUpdateDone, handleUpdateChunk);
   server.onNotFound([]() { sendResult(false, "Not found"); });
   server.begin();

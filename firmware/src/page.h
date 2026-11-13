@@ -1,6 +1,7 @@
-/* The bar's own page. One file, no external requests: it has to work from the
-   setup network, where there is no internet. Dark glass cards, sized for a phone
-   as much as a desktop. */
+/* The bar's own page. One file, and nothing it needs comes from elsewhere: it
+   has to work from the setup network, where there is no internet. The add-on
+   store is the one exception, and it is optional: it reads a folder on GitHub
+   only when opened. Dark glass cards, sized for a phone as much as a desktop. */
 #pragma once
 #include <Arduino.h>
 
@@ -36,6 +37,24 @@ button{height:34px;padding:0 14px;border-radius:999px;border:0;background:rgba(2
 button:hover{background:rgba(255,255,255,.17)}button.go{background:var(--text);color:#0a0d14}
 .line{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-top:12px}.line label{font-size:13px;color:var(--t2)}
 .grow{flex:1;min-width:140px}.msg{font-size:13px;color:var(--t2);min-height:18px;margin-top:10px}
+.head2{display:flex;align-items:center;gap:8px;margin-bottom:12px}.head2 h2{margin:0}.head2 .sp{margin-left:auto;display:flex;gap:8px}
+.tiles,.store{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px;margin-top:14px}
+.tile{display:flex;flex-direction:column;gap:6px;padding:14px 16px;border-radius:20px;background:rgba(255,255,255,.045);border:1px solid var(--line);min-width:0}
+.tile[data-on]{border-color:color-mix(in srgb,var(--c) 55%,var(--line));background:color-mix(in srgb,var(--c) 12%,rgba(255,255,255,.04))}
+.tile .t{display:flex;align-items:center;gap:8px;font-weight:600;min-width:0}.tile .t span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tile .d{font-size:12.5px;color:var(--t2);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.tile .acts{display:flex;gap:6px;margin-top:auto;padding-top:4px}.tile button{height:30px;font-size:12.5px}
+.dot{flex:none;width:8px;height:8px;border-radius:50%;background:#64748b}.dot[data-live]{background:#22c55e;box-shadow:0 0 0 3px rgba(34,197,94,.18)}.dot[data-bad]{background:#f59e0b}
+.tag{margin-left:auto;flex:none;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:600;color:var(--t2);background:rgba(255,255,255,.07)}
+.empty{padding:16px;border-radius:18px;border:1px dashed var(--line);color:var(--t3);font-size:13px}
+.sw{display:grid;grid-template-columns:repeat(25,1fr);gap:2px;height:10px;margin:2px 0}.sw i{border-radius:2px;background:#222}
+.panel{margin-top:14px;padding:14px;border-radius:22px;background:rgba(0,0,0,.18);border:1px solid var(--line)}
+details{margin-top:14px;border-top:1px solid var(--line);padding-top:12px}summary{cursor:pointer;color:var(--t2);font-size:13px}
+.upd{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:14px 16px;border-radius:20px;background:rgba(255,255,255,.045);border:1px solid var(--line)}
+.upd b{font-size:15px}
+.prog{height:6px;border-radius:99px;background:rgba(255,255,255,.08);overflow:hidden;margin-top:10px}.prog i{display:block;height:100%;width:0;background:var(--c);transition:width .4s}
+.tog{display:inline-flex;align-items:center;gap:8px;font-size:13px;color:var(--t2)}
+[hidden]{display:none!important}
 @media(max-width:560px){.row{grid-template-columns:76px 40px 40px 1fr auto}.row .spd{display:none}.big{font-size:40px}}
 </style></head><body><main>
 
@@ -69,11 +88,19 @@ button:hover{background:rgba(255,255,255,.17)}button.go{background:var(--text);c
 </section>
 
 <section class="card">
-  <h2>Add-ons</h2>
-  <div class="sub">Other programs on your network can use the bar, for example a meter of how much of something has been used. They post to the bar; you choose here whether one is shown.</div>
-  <div class="line"><label for="adshow">Show</label><select id="adshow" style="width:200px"></select><label for="adwhen">when</label><select id="adwhen" style="width:270px"><option value="idle">the printer is not busy with a print</option><option value="always">always, even while printing</option></select></div>
-  <div class="sub" id="adlist" style="margin-top:10px"></div>
-  <div class="sub" style="margin-top:10px">To write one: post JSON to <code>/api/addon</code> and keep posting. The full list of calls is at <a href="/api">/api</a>. Smallest example, a meter at 63%:<br><code>curl -X POST http://<span id="myip"></span>/api/addon -H "content-type: application/json" -d '{"id":"demo","name":"Demo","meters":[{"value":63,"colour":"#D97757"}]}'</code></div>
+  <div class="head2"><h2>Add-ons</h2><span class="sp"><button id="adstore">Store</button><button id="adup">Upload</button><input id="adfile" type="file" accept=".json,application/json" hidden></span></div>
+  <div class="sub">Show something else on the bar when the printer has nothing to say: an add-on from the store, a file of your own, or any program on your network.</div>
+  <div class="tiles" id="adtiles"></div>
+  <div class="line"><label for="adwhen">Show the picked one</label><select id="adwhen" style="width:auto;max-width:100%"><option value="idle">while the printer is not busy with a print</option><option value="always">always, even while printing</option></select><button id="adnone">Show nothing</button></div>
+  <div class="panel" id="storepanel" hidden>
+    <div class="head2" style="margin:0"><h2>Store</h2><span class="sp"><span class="sub" id="storenote"></span><button id="storeclose">Close</button></span></div>
+    <div class="store" id="storelist"></div>
+  </div>
+  <div class="msg" id="admsg"></div>
+  <details><summary>Build your own</summary>
+    <div class="sub" style="margin-top:10px">An add-on <b>file</b> is a few lines of JSON the bar runs itself: a look, meters, an animation, or a live meter read from a web address. Upload one here, or add yours to the store's folder on GitHub (<a href="https://github.com/ImSammyTTV/panda-status-p2-firmware/tree/main/addons/store" target="_blank" rel="noopener">format and examples</a>).</div>
+    <div class="sub" style="margin-top:10px">An add-on <b>program</b> runs anywhere on your network and posts to <code>/api/addon</code>, again and again. Every call is listed at <a href="/api">/api</a>. A meter at 63%:<br><code>curl -X POST http://<span id="myip"></span>/api/addon -H "content-type: application/json" -d '{"id":"demo","name":"Demo","meters":[{"value":63,"colour":"#D97757"}]}'</code></div>
+  </details>
 </section>
 
 <section class="card">
@@ -87,14 +114,26 @@ button:hover{background:rgba(255,255,255,.17)}button.go{background:var(--text);c
 
 <section class="card">
   <h2>Wi-Fi</h2>
-  <div class="line"><input class="grow" id="ssid" type="text" placeholder="Network name" autocomplete="off"><input class="grow" id="pass" type="password" placeholder="Password" autocomplete="off"><button id="wifi">Save and join</button></div>
+  <div class="upd"><div class="grow"><b id="wifititle">…</b><div class="sub" id="wifisub"></div></div><button id="scan">Scan</button></div>
+  <div class="line"><input class="grow" id="ssid" type="text" list="nets" placeholder="Network name" autocomplete="off"><datalist id="nets"></datalist><input class="grow" id="pass" type="password" placeholder="Password" autocomplete="off"><button class="go" id="wifi">Save and join</button></div>
   <div class="msg" id="wifimsg"></div>
+  <h2 style="margin-top:18px">The bar's own hotspot</h2>
+  <div class="upd"><div class="grow"><b id="aptitle">…</b><div class="sub" id="apsub"></div></div></div>
+  <div class="line"><label for="apmode">Hotspot</label><select id="apmode" style="width:300px"><option value="fallback">On only when Wi-Fi does not connect</option><option value="always">Always on</option></select></div>
+  <div class="line"><input class="grow" id="apssid" type="text" placeholder="Hotspot name" autocomplete="off"><input class="grow" id="appass" type="password" placeholder="New password (8+ characters), or leave empty" autocomplete="new-password"><button id="apsave">Save</button></div>
+  <div class="msg" id="apmsg"></div>
 </section>
 
 <section class="card">
   <h2>Firmware</h2>
-  <div class="sub" id="slots"></div>
-  <div class="line"><input class="grow" id="bin" type="file" accept=".bin"><button class="go" id="up">Install</button></div>
+  <div class="upd">
+    <div class="grow"><b id="updtitle">…</b><div class="sub" id="updsub"></div></div>
+    <button id="updcheck">Check for updates</button><button class="go" id="updinstall" hidden>Install</button>
+  </div>
+  <div class="prog" id="updprog" hidden><i></i></div>
+  <div class="line"><label class="tog"><input type="checkbox" id="updauto"> Look for a new release once a day (it is never installed without you)</label></div>
+  <div class="sub" id="slots" style="margin-top:12px"></div>
+  <div class="line"><input class="grow" id="bin" type="file" accept=".bin"><button id="up">Install file</button></div>
   <div class="line"><button id="other">Start the firmware in the other slot</button><button id="reboot">Restart</button><button id="factory">Reset settings</button></div>
   <div class="msg" id="fwmsg"></div>
 </section>
@@ -145,7 +184,89 @@ function paintSched(){ $('schon').textContent=schedOn?'On':'Off'; $('schon').cla
 $('schon').onclick=()=>{schedOn=!schedOn;paintSched();saveSched();};
 async function saveSched(){busy=Date.now();const o=$('zone').selectedOptions[0];const r=await post('/api/config',{schedule:{enabled:schedOn,from:$('schfrom').value,to:$('schto').value,level:+$('schlvl').value},time:{tz:o.value,zone:o.dataset.zone}});$('schmsg').textContent=r.ok?'Saved':(r.message||'Not saved');}
 $('schsave').onclick=saveSched; $('zone').onchange=saveSched;
-$('adshow').onchange=()=>{busy=Date.now();post('/api/config',{addon:{show:$('adshow').value}});};
+/* The store is a folder on GitHub, read by this page (so it needs internet on the device showing the page, not on the bar). Using an add-on hands the bar its address; the bar fetches it from there each time it starts and keeps nothing else. */
+const STORE='https://raw.githubusercontent.com/ImSammyTTV/panda-status-p2-firmware/main/addons/store/';
+const esc=(t)=>String(t??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const ago=(n)=>n<60?n+' s':n<3600?Math.round(n/60)+' min':n<172800?Math.round(n/3600)+' h':Math.round(n/86400)+' days';
+let last=null;
+function pick(id){busy=Date.now();post('/api/config',{addon:{show:id}}).then(r=>{$('admsg').textContent=r.ok?'':(r.message||'Not saved');});}
+function renderAddons(s){
+  const f=s.addonFile, want=s.config.addon.show, tiles=[];
+  if(f.from||f.loading||f.error){
+    const posted=s.addons.find(a=>a.id===f.id);
+    tiles.push({id:f.id,name:f.name||(f.loading?'Loading…':'Add-on file'),desc:f.error||f.description,tag:f.from==='store'?'store':'file',
+      sub:[f.kind!=='none'?f.kind:'',f.value!==undefined?'reads '+(+f.value).toPrecision(4):'',f.author?'by '+f.author:''].filter(Boolean).join(' · '),live:posted&&posted.fresh,bad:!!f.error,file:true});
+  }
+  for(const a of s.addons){if(f.from&&a.id===f.id)continue;tiles.push({id:a.id,name:a.name,tag:'program',sub:a.kind+' · '+(a.fresh?'posted '+a.age+' s ago':'stopped posting'),live:a.fresh});}
+  if(want&&!tiles.some(t=>t.id===want))tiles.push({id:want,name:want,desc:'Picked, but not posting just now',tag:'program',live:false});
+  const html=tiles.length?tiles.map(t=>'<div class="tile"'+(t.id&&t.id===want?' data-on':'')+'><div class="t"><i class="dot"'+(t.live?' data-live':'')+(t.bad?' data-bad':'')+'></i><span>'+esc(t.name)+'</span><em class="tag">'+t.tag+'</em></div>'
+    +(t.desc?'<div class="d">'+esc(t.desc)+'</div>':'')+'<div class="sub">'+esc(t.sub||'')+(s.addonShowing&&s.addonShowing===t.id?' · on the bar now':'')+'</div>'
+    +'<div class="acts">'+(t.id?(t.id===want?'<button class="go" disabled>Picked</button>':'<button data-pick="'+esc(t.id)+'">Show this</button>'):'')+(t.file?'<button data-remove="1">Remove</button>':'')+'</div></div>').join('')
+    :'<div class="empty">No add-ons yet. Open the store, upload a file, or have a program post to <code>/api/addon</code>.</div>';
+  if(html!==window.adHtml){window.adHtml=html;$('adtiles').innerHTML=html;}
+}
+$('adtiles').onclick=async(e)=>{const b=e.target.closest('button');if(!b)return;if(b.dataset.pick)pick(b.dataset.pick);
+  if(b.dataset.remove){if(!confirm('Remove this add-on from the bar?'))return;const r=await post('/api/addonfile',{remove:true});$('admsg').textContent=r.message||'';}};
+$('adnone').onclick=()=>pick('');
+$('adup').onclick=()=>$('adfile').click();
+$('adfile').onchange=async()=>{const file=$('adfile').files[0];$('adfile').value='';if(!file)return;let obj;
+  try{obj=JSON.parse(await file.text());}catch(e){$('admsg').textContent='That file is not valid JSON';return;}
+  const r=await post('/api/addonfile',{file:obj});$('admsg').textContent=r.ok?'Uploaded. It shows as soon as it has loaded, in place of any add-on file the bar had.':(r.message||'Not accepted');};
+async function openStore(){
+  $('storepanel').hidden=false;$('storenote').textContent='Loading…';
+  let idx;try{idx=await fetch(STORE+'index.json',{cache:'no-store'}).then(r=>{if(!r.ok)throw 0;return r.json();});}
+  catch(e){$('storenote').textContent='Could not reach the store: it needs internet on this device';$('storelist').innerHTML='';return;}
+  $('storenote').textContent=idx.addons.length+' from GitHub · one at a time';
+  $('storelist').innerHTML=idx.addons.map(a=>{const url=STORE+a.file,using=last&&last.addonFile.url===url,cols=(a.preview||'').match(/[0-9a-fA-F]{6}/g)||[];
+    return '<div class="tile"'+(using?' data-on':'')+'><div class="t"><span>'+esc(a.name)+'</span><em class="tag">'+esc(a.kind)+'</em></div>'
+      +(cols.length===25?'<div class="sw">'+cols.map(c=>'<i style="background:#'+c+'"></i>').join('')+'</div>':'')
+      +'<div class="d">'+esc(a.description)+'</div><div class="sub">'+(a.author?'by '+esc(a.author):'')+'</div>'
+      +'<div class="acts">'+(using?'<button class="go" disabled>In use</button>':'<button data-url="'+esc(url)+'">Use this</button>')+'</div></div>';}).join('');
+}
+$('adstore').onclick=openStore;$('storeclose').onclick=()=>{$('storepanel').hidden=true;};
+$('storelist').onclick=async(e)=>{const b=e.target.closest('button');if(!b||!b.dataset.url)return;b.disabled=true;b.textContent='Adding…';
+  const r=await post('/api/addonfile',{url:b.dataset.url});$('admsg').textContent=r.ok?'Added. The bar is fetching it from GitHub.':(r.message||'Not accepted');setTimeout(openStore,3000);};
+function renderUpdate(s){
+  const u=s.update,v=(t)=>String(t).replace(/^v/,'');
+  $('updtitle').textContent=u.phase==='downloading'?'Installing '+v(u.latest)+' · '+u.percent+'%':u.phase==='installed'?u.message
+    :u.phase==='available'?'Version '+v(u.latest)+' is available':u.phase==='checking'?'Looking on GitHub…'
+    :u.phase==='current'?'Up to date · '+s.version:'Version '+s.version;
+  const sub=u.phase==='failed'?esc(u.message)
+    :u.phase==='available'?'It goes into the other slot (replacing what is there) and starts on trial. <a href="'+esc(u.page)+'" target="_blank" rel="noopener">What is new</a>'
+    :u.phase==='downloading'?'Downloading from GitHub and checking it against the release\'s checksum. The bar restarts when it is done.'
+    :u.checkedAgo!==null?'Checked GitHub '+ago(u.checkedAgo)+' ago':'Releases come from github.com/'+esc(u.repo);
+  if(sub!==window.updSub){window.updSub=sub;$('updsub').innerHTML=sub;}
+  $('updinstall').hidden=u.phase!=='available';$('updinstall').textContent='Install '+v(u.latest);
+  $('updcheck').disabled=u.phase==='checking'||u.phase==='downloading';
+  $('updprog').hidden=u.phase!=='downloading';$('updprog').firstChild.style.width=u.percent+'%';
+  if(Date.now()-busy>3000)$('updauto').checked=u.auto;
+}
+function renderWifi(s){
+  $('wifititle').textContent=s.wifiConnected?'Connected to '+s.wifiName:s.wifiName?'Not connected to '+s.wifiName:'No Wi-Fi network saved';
+  $('wifisub').textContent=s.wifiConnected?s.ip+' · signal '+s.rssi+' dBm':'Trying again every 30 seconds. Its own hotspot comes up after a minute without Wi-Fi.';
+  const a=s.ap;
+  $('aptitle').textContent=a.up?'On: '+a.ssid:'Off until Wi-Fi fails';
+  const sub=a.up?'Join "'+a.ssid+'"'+(a.defaultPassword?' (password '+a.defaultPassword+')':'')+', then open http://'+a.ip+' · '+a.clients+' connected'
+    :'If the bar cannot reach Wi-Fi for a minute it starts "'+a.ssid+'"'+(a.defaultPassword?', password '+a.defaultPassword:'')+', at http://'+a.ip+'. Holding the button for five seconds starts it too.';
+  $('apsub').textContent=sub;
+  if(Date.now()-busy>3000&&document.activeElement!==$('apssid')){$('apmode').value=a.always?'always':'fallback';if(!$('apssid').value)$('apssid').value=a.ssid;}
+}
+async function scanNets(again){
+  $('scan').disabled=true;$('wifimsg').textContent='Looking for networks…';
+  /* The bar's radio leaves its channel while it scans, so a request now and then goes unanswered: keep asking. */
+  for(let i=0;i<20;i++){let r={};try{r=await fetch('/api/wifi/scan'+(again&&i===0?'?again':'')).then(x=>x.json());}catch(e){}
+    if(r.networks){$('nets').innerHTML=r.networks.map(n=>'<option value="'+esc(n.ssid)+'">'+n.rssi+' dBm'+(n.open?' · open':'')+'</option>').join('');
+      $('wifimsg').textContent=r.networks.length+' networks found: click the name box to pick one';$('scan').disabled=false;return;}
+    await new Promise(z=>setTimeout(z,800));}
+  $('wifimsg').textContent='The scan did not finish';$('scan').disabled=false;
+}
+$('scan').onclick=()=>scanNets(true);
+$('apsave').onclick=async()=>{busy=Date.now();const body={always:$('apmode').value==='always',ssid:$('apssid').value.trim()};if($('appass').value)body.password=$('appass').value;
+  const r=await post('/api/ap',body);$('apmsg').textContent=r.message||(r.ok?'Saved':'Not saved');if(r.ok)$('appass').value='';};
+$('apmode').onchange=$('apsave').onclick;
+$('updcheck').onclick=()=>post('/api/update',{check:true});
+$('updinstall').onclick=async()=>{if(!confirm('Install '+$('updinstall').textContent.replace('Install ','')+' from GitHub? It replaces the firmware in the other slot, and the bar restarts into it.'))return;const r=await post('/api/update',{install:true});if(!r.ok)$('fwmsg').textContent=r.message||'';};
+$('updauto').onchange=()=>{busy=Date.now();post('/api/update',{auto:$('updauto').checked});};
 $('adwhen').onchange=()=>{busy=Date.now();post('/api/config',{addon:{when:$('adwhen').value}});};
 $('mstatus').onclick=()=>{busy=Date.now();post('/api/config',{mode:'status'});};
 $('mmusic').onclick=()=>{busy=Date.now();post('/api/config',{mode:'music'});};
@@ -191,15 +312,8 @@ async function tick(){
     :s.printer.paired?'Not hearing from the printer'+(s.printer.error?': '+s.printer.error:'')
     :'Not paired with a printer, and no controller is speaking';
   $('clock').textContent=s.clock.known?'The bar makes it '+s.clock.now+(s.clock.dark?' · dark spell on now':''):'The bar has not got the time from the internet yet, so the schedule is waiting';
-  /* Add-ons: the picker lists whatever has posted, plus the saved pick even if it is not posting just now. */
-  const want=s.config.addon.show, ids=s.addons.map(a=>a.id), opts=['',...ids,...(want&&!ids.includes(want)?[want]:[])];
-  /* Rebuilt only when the set of names changes. Compared against what was last built, not against the list itself: an empty list and a list holding only "nothing" both read as the same empty string (0.4.0 showed a blank picker). */
-  const adKey=opts.join('|')+'#'+s.addons.map(a=>a.name).join('|');
-  if(Date.now()-busy>3000&&adKey!==window.adBuilt){
-    window.adBuilt=adKey; $('adshow').innerHTML=''; for(const id of opts){const o=document.createElement('option');o.value=id;const a=s.addons.find(x=>x.id===id);o.textContent=!id?'nothing':a?a.name:id+' (not posting)';$('adshow').appendChild(o);}
-  }
-  if(Date.now()-busy>3000){$('adshow').value=want;$('adwhen').value=s.config.addon.when;}
-  $('adlist').textContent=s.addons.length?s.addons.map(a=>a.name+' ('+a.id+', '+a.kind+', '+(a.fresh?'posted '+a.age+' s ago':'stopped posting')+(s.addonShowing===a.id?', on the bar now':'')+')').join(' · '):'No add-on has posted since the bar started.';
+  last=s; renderAddons(s); renderUpdate(s); renderWifi(s);
+  if(Date.now()-busy>3000) $('adwhen').value=s.config.addon.when;
   if(s.addonShowing){const a=s.addons.find(x=>x.id===s.addonShowing);$('state').textContent=a?a.name:s.addonShowing;$('said').textContent='An add-on has the bar';}
   const p=s.printer;
   $('prstate').textContent=!p.paired?'Not paired.'

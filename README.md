@@ -53,9 +53,21 @@ anything on your network can use the bar.
   sensitivity.
 - **Schedule.** Dark (or dimmed) by the clock, e.g. 9 pm to 9 am. Time comes
   from the internet; the time zone is picked on the page.
-- **Add-ons.** Other programs on your network can show things on the bar: a
-  meter, a colour, or a full 25-LED frame. You choose which add-on is shown, and
-  whether only while the printer is idle or always.
+- **Add-ons, with a store.** Show something else on the bar when the printer
+  has nothing to say: a look, meters, an animation, or a live meter read from a
+  web address (a price, a usage figure). Pick one from the
+  [store](addons/store) on the bar's page, upload a file of your own, or have
+  any program on your network post to the bar. A store add-on is fetched from
+  GitHub when the bar starts; only its address is kept on the bar.
+- **Updates from GitHub.** *Check for updates* on the bar's page finds the
+  newest release here, and *Install* downloads it, checks it against the
+  release's SHA256 checksums and installs it, with the same trial-and-rollback
+  safety as any update. An optional daily check tells you when there is one; it
+  never installs by itself.
+- **Its own hotspot when Wi-Fi fails.** After a minute without Wi-Fi the bar
+  starts its own network so you can reach it and fix the settings, and it
+  goes away again once Wi-Fi is back. It can be kept on all the time, and its
+  name and password changed. The Wi-Fi card can scan for networks.
 - **A controller can drive it.** Something that knows more than the bar (a
   home-automation system, a script) can post the printer's state; the bar
   believes it while it keeps posting, then falls back to its own printer link.
@@ -113,10 +125,10 @@ It works because:
 ## Installing
 
 You need: a Panda Status P2 on your Wi-Fi, its IP address (the stock app or
-your router shows it), and `releases/panda-p2-custom-0.5.2.bin`.
+your router shows it), and `releases/panda-p2-custom-0.6.0.bin`.
 
 **From the stock firmware's page:** open `http://<bar address>/`, find the
-firmware update section, choose `panda-p2-custom-0.5.2.bin` and upload it.
+firmware update section, choose `panda-p2-custom-0.6.0.bin` and upload it.
 
 **Or from a terminal:**
 
@@ -124,22 +136,27 @@ firmware update section, choose `panda-p2-custom-0.5.2.bin` and upload it.
 curl -X POST http://<bar address>/ota \
      -H "OTA-Type: ota_fw" \
      -H "Content-Type: application/octet-stream" \
-     --data-binary @releases/panda-p2-custom-0.5.2.bin
+     --data-binary @releases/panda-p2-custom-0.6.0.bin
 ```
 
 The bar restarts into the new firmware within a few seconds, joins the same
 Wi-Fi and keeps its printer pairing. Open `http://<bar address>/` again: the
-page now says *panda 0.5.2*.
+page now says *panda 0.6.0*.
 
 Check the download against `releases/SHA256SUMS.txt` first.
 
 ### Updating later
 
-Updating from this firmware's own page (*Firmware → Install*) writes into the
-other slot, which **replaces the stock firmware kept there**. To keep stock in
-the other slot, update through stock instead: press *Start the firmware in the
-other slot* (the bar restarts into stock), then upload the new image through
-stock as above.
+From 0.6.0 the bar updates itself: open its page, **Firmware → Check for
+updates**, then **Install**. It downloads the newest release from this
+repository, refuses it unless it matches the release's `SHA256SUMS.txt`, and
+restarts into it on trial. (*Install file* still takes a `.bin` you have
+downloaded yourself.)
+
+Either way the new firmware goes into the other slot, which **replaces whatever
+is kept there, the stock firmware included**. To keep stock in the other slot,
+update through stock instead: press *Start the firmware in the other slot* (the
+bar restarts into stock), then upload the new image through stock as above.
 
 ## Staying safe
 
@@ -149,10 +166,15 @@ stock as above.
   bar back to the other slot by itself.
 - **Microphone guard.** If starting the microphone ever brings the chip down,
   the next start leaves it off, so the bar stays reachable for an update.
-- **Setup network.** With no Wi-Fi for 3 minutes (or after a 5 s button hold)
-  the bar starts its own network, `PandaP2-Setup`, password `panda` followed by
-  the last six hex digits of its MAC address. Join it and open
-  `http://192.168.4.1/`.
+- **Hotspot.** With no Wi-Fi for a minute (or after a 5 s button hold) the bar
+  starts its own network, `PandaP2-Setup` unless you renamed it, password
+  `panda` followed by the last six hex digits of its MAC address unless you
+  changed it (the page shows the default). Join it and open
+  `http://192.168.4.1/`. It cannot be switched off for good, so the bar can
+  always be reached without a cable.
+- **Updates are checked.** A firmware downloaded by the bar must match the
+  release's SHA256 checksum, and HTTPS is checked against built-in root
+  certificates, never skipped.
 - **Stock's settings are never written.** The firmware reads stock's saved
   Wi-Fi and printer pairing once and keeps its own settings separately, so going
   back to stock finds everything as it was.
@@ -197,7 +219,11 @@ list below as JSON.
 | `POST /api/config` | any subset of the settings | `brightness`, `mode`, `music.sensitivity`, `states.<state>.{colour,colour2,effect,speed}`, `cool.{minutes,target}`, `schedule.{enabled,from,to,level}`, `time.{tz,zone}`, `addon.{show,when}`, `order`, `reversed` |
 | `POST /api/preview` | `{"state":"cooling","progress":60,"seconds":8}` | Show a look for a few seconds without it counting as the printer's state |
 | `POST /api/printer` | `{"ip":"…","serial":"…","code":"…"}` | Pair with a printer; `{"forget":true}` unpairs. The access code is never sent back out |
+| `POST /api/addonfile` | `{"url":"https://…"}`, `{"file":{…}}` or `{"remove":true}` | An add-on the bar runs itself (see [the store's README](addons/store/README.md) for the format). Shown as soon as it loads |
+| `POST /api/update` | `{"check":true}`, `{"install":true}`, `{"auto":true}` | Look for a newer release on GitHub, install it, or switch the daily check on or off. Progress is in `/api/status` → `update` |
 | `POST /api/wifi` | `{"ssid":"…","password":"…"}` | Save Wi-Fi and restart to join |
+| `GET /api/wifi/scan` | | Networks in range (the first call starts the scan; ask again for the list) |
+| `POST /api/ap` | `{"always":false,"ssid":"…","password":"…"}` | The bar's own hotspot: on only when Wi-Fi fails (default) or always; its name and password |
 | `POST /api/slot` | | Restart into the firmware in the other slot |
 | `POST /api/reboot`, `POST /api/factory` | | Restart; clear this firmware's own settings |
 | `POST /update` | multipart file | Install a `.bin` into the other slot and restart into it |
