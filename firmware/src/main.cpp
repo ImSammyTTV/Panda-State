@@ -337,17 +337,48 @@ static const char *applyConfig(JsonVariantConst doc) {
   return nullptr;
 }
 
+/* Settings are kept as a blob ("cfgb"), not a string. The settings store is
+   12 KB shared with stock in the other slot, and an NVS string has to fit
+   inside one 4 KB page: once no page had 1.1 KB spare, every save failed
+   without a sound and each change lasted only until the next restart (an
+   add-on pick kept vanishing). A blob is stored in chunks across pages, so it
+   fits wherever there is room. The old "cfg" string is read once and removed
+   after the first blob save, which also gives its space back. */
+static bool cfgSaveOk = true;
+static String cfgSaved;  // what the store holds, so an unchanged save writes nothing
 static void saveConfig() {
   JsonDocument doc;
   configToJson(doc);
   String text;
   serializeJson(doc, text);
-  prefs.putString("cfg", text);
+  if (text == cfgSaved && cfgSaveOk) return;
+  bool ok = prefs.putBytes("cfgb", text.c_str(), text.length()) == text.length();
+  if (!ok && prefs.isKey("cfg")) {
+    // Not enough room while the old string still sits there: drop it and try again, and put it back if that fails too.
+    prefs.remove("cfg");
+    ok = prefs.putBytes("cfgb", text.c_str(), text.length()) == text.length();
+    if (!ok) prefs.putString("cfg", text);
+  }
+  if (ok) {
+    if (prefs.isKey("cfg")) prefs.remove("cfg");
+    cfgSaved = text;
+  }
+  cfgSaveOk = ok;
 }
 
 static void loadConfig() {
-  String text = prefs.getString("cfg", "");
+  String text;
+  const size_t size = prefs.isKey("cfgb") ? prefs.getBytesLength("cfgb") : 0;
+  if (size) {
+    std::unique_ptr<char[]> buf(new char[size + 1]);
+    prefs.getBytes("cfgb", buf.get(), size);
+    buf[size] = 0;
+    text = buf.get();
+  } else {
+    text = prefs.getString("cfg", "");
+  }
   if (!text.length()) return;
+  cfgSaved = text;
   JsonDocument doc;
   if (deserializeJson(doc, text)) return;
   applyConfig(doc.as<JsonVariantConst>());
@@ -1711,6 +1742,16 @@ static void handleStatus() {
     doc["resetReason"] = why == ESP_RST_POWERON ? "power on" : why == ESP_RST_SW ? "restart" : why == ESP_RST_PANIC ? "crash"
       : (why == ESP_RST_INT_WDT || why == ESP_RST_TASK_WDT || why == ESP_RST_WDT) ? "watchdog" : why == ESP_RST_BROWNOUT ? "brownout" : "other";
   }
+  /* The settings store, measured: it is 12 KB shared with stock in the other slot, and a save that does not fit fails without a sound. */
+  {
+    nvs_stats_t st;
+    if (nvs_get_stats(NULL, &st) == ESP_OK) {
+      doc["nvs"]["used"] = st.used_entries;
+      doc["nvs"]["free"] = st.free_entries;
+      doc["nvs"]["total"] = st.total_entries;
+    }
+    doc["nvs"]["lastSaveOk"] = cfgSaveOk;
+  }
   doc["heap"] = ESP.getFreeHeap();
   /* The largest single piece: a TLS session needs one big block, so this, not the total, says whether HTTPS will start. */
   doc["heapBlock"] = ESP.getMaxAllocHeap();
@@ -1878,6 +1919,8 @@ static void handleConfig() {
   const char *error = applyConfig(doc.as<JsonVariantConst>());
   if (error) return sendResult(false, error);
   saveConfig();
+  // Say so when the store refused it: the change works now but would be gone after a restart.
+  if (!cfgSaveOk) return sendResult(false, "Changed, but the bar could not save it: it will be lost on a restart");
   sendResult(true);
 }
 
