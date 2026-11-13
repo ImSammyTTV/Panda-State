@@ -30,6 +30,7 @@
 #include <WiFiClientSecure.h>
 #include <WebServer.h>
 #include <ESPmDNS.h>
+#include <mdns.h>
 #include <Preferences.h>
 #include <Update.h>
 #include <ArduinoJson.h>
@@ -48,7 +49,7 @@
 
 /* What the firmware calls itself on its page and in /api/status. Plain and generic, so it says what it is on anyone's network. */
 #define FW_NAME "panda"
-#define FW_VERSION "0.7.5"
+#define FW_VERSION "0.7.6"
 /* Where new releases and the add-on store live. A release must carry a
    panda-<board>-custom-<version>.bin for each board and a SHA256SUMS.txt that lists them. */
 #define UPDATE_REPO "ImSammyTTV/Panda-State"
@@ -80,6 +81,19 @@
 #define AP_DEFAULT_SSID "PandaP2-Setup"
 #else
 #define AP_DEFAULT_SSID "PandaState-Setup"
+#endif
+/* The .local name each board's stock firmware answers to, read out of BTT's
+   own images (the string beside their _http._tcp record), so an owner who
+   bookmarked it, or was told it by BTT, still lands on the bar. "pandastatus"
+   is answered too: every Panda State before 0.7.6 used it. */
+#if defined(BOARD_RGB)
+#define STOCK_HOST "PandaRGBController"
+#elif defined(BOARD_LUX)
+#define STOCK_HOST "PandaLuxRGB"
+#elif defined(BOARD_STATUS)
+#define STOCK_HOST "PandaStatusV1"
+#else
+#define STOCK_HOST "PandaStatusP2"
 #endif
 static const char *BUILD_ID = FW_VERSION " " __DATE__ " " __TIME__;
 
@@ -416,6 +430,7 @@ static volatile bool prRestart = false;       // settings changed: drop the link
 static volatile bool prPaused = false;
 /* Set for the few seconds an add-on or update download needs the memory the printer link's secure session holds. */
 static volatile bool prHold = false;
+static volatile bool prHoldAck = false;      // the printer task has dropped its secure session and is waiting: the memory is free now
 static volatile bool prConnected = false;
 static char prError[48] = "";
 static char prGcode[12] = "";                 // RUNNING, PAUSE, FINISH, IDLE, FAILED, PREPARE ...
@@ -746,7 +761,7 @@ static void printerTask(void *) {
     xSemaphoreGive(prLock);
     prRestart = false;
     if (prPaused) { prConnected = false; prSetError("Paused while a firmware update downloads"); prWait(1000); continue; }
-    if (prHold) { prConnected = false; prSetError("Let go for a moment while an add-on downloads"); prWait(250); continue; }
+    if (prHold) { prConnected = false; prHoldAck = true; prSetError("Let go for a moment while an add-on downloads"); prWait(250); continue; }
     if (!ip.length() || (kind == PR_BAMBU && !serial.length())) { prConnected = false; prSetError(""); prWait(2000); continue; }
     if (WiFi.status() != WL_CONNECTED) { prConnected = false; prSetError("Waiting for Wi-Fi"); prWait(2000); continue; }
     /* Klipper's link stays "connected" between polls, so it is not reset at the top of each pass. */
@@ -2276,6 +2291,13 @@ static void handleUpdateChunk() {
  * measured on 0.6.0 that failed every time ("could not connect") while both
  * hosts worked when asked directly; so each hop here is a fresh connection.
  */
+static bool prPaired() {
+  xSemaphoreTake(prLock, portMAX_DELAY);
+  const bool paired = prIp.length() && prSerial.length();
+  xSemaphoreGive(prLock);
+  return paired;
+}
+
 struct Fetch {
   WiFiClientSecure tls;
   WiFiClient plain;
@@ -2304,12 +2326,18 @@ struct Fetch {
          and that fails as "certificate verification failed": measured on the
          P2 with 38 KB as the largest free block, where 80-90 KB had always
          worked. So a secure download that cannot connect while the Bambu
-         link is up lets the link go for those few seconds and tries again. */
-      if (code < 0 && secure && !held && prKind == PR_BAMBU && prConnected) {
+         link is up lets the link go for those few seconds and tries again.
+         "Up" means paired, not just connected: a link in the middle of
+         reconnecting holds a handshake's worth of memory too, and checking
+         prConnected alone let exactly that case fail (a live meter showing
+         X509 errors on and off). It waits for the printer task to say it has
+         let go, which can take a handshake timeout, rather than guessing. */
+      if (code < 0 && secure && !held && prKind == PR_BAMBU && prPaired()) {
         held = true;
+        prHoldAck = false;
         prHold = true;
         prRestart = true;
-        for (int i = 0; i < 40 && prConnected; i++) delay(100);
+        for (int i = 0; i < 150 && !prHoldAck; i++) delay(100);
         delay(300);
         http.end();
         tls.stop();
@@ -2336,7 +2364,7 @@ struct Fetch {
     if (tlsCode) why += " (secure connection: " + String(tlsWhy) + ")";
     return why;
   }
-  ~Fetch() { http.end(); tls.stop(); if (held) prHold = false; }
+  ~Fetch() { http.end(); tls.stop(); if (held) { prHold = false; prHoldAck = false; } }
 };
 
 /* "v0.6.1" against "0.6.0": numbers compared part by part. */
@@ -3246,8 +3274,26 @@ void setup() {
   server.on("/update", HTTP_POST, handleUpdateDone, handleUpdateChunk);
   server.onNotFound([]() { sendResult(false, "Not found"); });
   server.begin();
-  MDNS.begin("pandastatus");
+  MDNS.begin(STOCK_HOST);
+  mdns_instance_name_set(STOCK_HOST);
   MDNS.addService("http", "tcp", 80);
+}
+
+/* The second name is a delegated host, which mDNS answers with a fixed
+   address, so it is set again whenever the bar's address changes (DHCP,
+   another network, the hotspot). */
+static void keepSecondName() {
+  static uint32_t had = 0;
+  const IPAddress ip = WiFi.status() == WL_CONNECTED ? WiFi.localIP() : IPAddress();
+  if ((uint32_t)ip == had) return;
+  if (had) mdns_delegate_hostname_remove("pandastatus");
+  had = (uint32_t)ip;
+  if (!had) return;
+  mdns_ip_addr_t addr = {};
+  addr.addr.type = ESP_IPADDR_TYPE_V4;
+  addr.addr.u_addr.ip4.addr = had;
+  addr.next = nullptr;
+  mdns_delegate_hostname_add("pandastatus", &addr);
 }
 
 void loop() {
@@ -3263,6 +3309,7 @@ void loop() {
   if (millis() - lastWatchAt >= 1000) {
     lastWatchAt = millis();
     watchTrial();
+    keepSecondName();
     trackPrinter();
     /* The filament in use, remembered (and kept across restarts) so it can still be shown once the printer has unloaded it. */
     if (printerFresh()) {

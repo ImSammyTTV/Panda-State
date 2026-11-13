@@ -206,7 +206,7 @@ function build(s){
   const h=s.homeAssistant; haOn=h.on; paintHa(); $('hahost').value=h.host; $('haport').value=h.port; $('hauser').value=h.user; $('haprefix').value=h.prefix; $('hatopic').textContent=h.topic;
 
   const p2=(s.board||'p2')==='p2'; $('moderow').hidden=!p2; $('btnhelp').textContent=p2?$('btnhelp').textContent:'Button on the board: hold five seconds for the setup Wi-Fi network.';
-  if(s.board==='status'){$('striprow').hidden=false;$('striplen').value=s.config.stripLength;}
+  if(s.board==='status'||s.board==='lux'){$('striprow').hidden=false;$('striplen').value=s.config.stripLength;}
   if(s.board==='rgb'){$('splitrow').hidden=false;$('split').checked=s.config.split;} $('cmin').value=s.config.cool.minutes; $('cbed').value=s.config.cool.target;
   const sc=s.config.schedule; schedOn=sc.enabled; paintSched(); $('schfrom').value=sc.from; $('schto').value=sc.to; $('schlvl').value=sc.level;
   /* The zone list: the saved one first if it is not a listed zone, then the browser's own, then the table. */

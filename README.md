@@ -51,6 +51,12 @@ API.
 The bar restarts into it in a few seconds, on the same Wi-Fi and still paired.
 From then on it updates itself: **Firmware → Check for updates → Install**.
 
+It keeps the name its stock firmware had on your network (0.7.6 and later), so
+the page is also at `http://PandaStatusP2.local` (P2), `http://PandaStatusV1.local`
+(original Status), `http://PandaLuxRGB.local` (Lux RGB) or
+`http://PandaRGBController.local` (RGB Controller). `http://pandastatus.local`
+works on every board.
+
 ---
 
 <a id="which-boards"></a>
@@ -285,7 +291,7 @@ stock your own bar already has:
   yourself: it holds your Wi-Fi password and printer access code. To restore,
   `esptool.py --baud 115200 write_flash 0 backup.bin`.
 
-Back on stock, its own defaults apply: `http://PandaStatus.local`, hotspot
+Back on stock, its own defaults apply: `http://PandaStatusP2.local`, hotspot
 `Panda_Status_P2_…` with password `987654321` at `192.168.254.1`.
 
 </details>
