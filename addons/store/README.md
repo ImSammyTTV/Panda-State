@@ -31,7 +31,8 @@ README's API section).
 | `meters` | One to four bars sharing the strip: `[{"value": 0-100, "colour": "#RRGGBB"}]` |
 | `frame` | All 25 LEDs: a list of 25 `#RRGGBB`, or one string of 150 hex digits |
 | `frames` | An animation: `{"fps": 1-20, "list": ["150 hex digits", …]}`, up to 30 frames, looped |
-| `source` | A live meter from a web address: `{"url", "path", "min", "max", "colour", "every"}` |
+| `source` | A live meter from a web address: `{"url", "path", "min", "max", "colour", "every"}`. With `"base"`, a second path, the meter shows the percentage change from `base` to `path` (base needs firmware 0.7.7 or later) |
+| `countdown` | A meter that empties from `from` to `to`, then shows its `done` effect for `doneHours`: `{"from": "YYYY-MM-DDTHH:MM", "to": "...", "colour": "#RRGGBB", "done": "rainbow", "doneHours": 0-168}`. Times are local, in the bar's own time zone. Needs firmware 0.7.7 or later |
 | `filament` | The colour of the filament the printer is using: `{"effect": "solid", "speed": 1-100}`. Between prints, the last one used, breathing slowly. Needs firmware 0.7.3 or later and a Bambu printer |
 
 Effects: solid, breathe, fill, flash, chase, rainbow, gradient, waves, scroll,
@@ -59,13 +60,22 @@ belong, and give its `index.json` entry `"needs": "place"`. The bar's page then
 shows **Use for my town**: it asks for the town, finds it with Open-Meteo's
 free place search, and gives the bar a copy with the place filled in.
 
+### Add-ons that ask a question
+
+Two more `needs` work the same way:
+
+- `"needs": "symbol"` shows **Choose a stock**: it asks for a stock code and
+  fills in `{symbol}`.
+- `"needs": "countdown"` shows **Set the time**: it asks what the countdown is
+  for and when it ends, and fills in `{label}`, `{from}` (now) and `{to}`.
+
 ## Adding one to the store
 
 1. Add your `.json` file to this folder.
 2. Add an entry for it to `index.json`: `file`, `name`, `description`,
-   `author`, `kind` (`look`, `animation` or `live meter`), `preview` (25
-   colours as 150 hex digits for the little strip on the store card) and, for
-   an add-on that needs a location, `"needs": "place"`.
+   `author`, `kind` (`look`, `animation`, `live meter` or `countdown`),
+   `preview` (25 colours as 150 hex digits for the little strip on the store
+   card) and, for an add-on that asks for something, its `needs`.
 3. Open a pull request.
 
 Add-ons run on the bar itself, so keep them small and kind to the services they

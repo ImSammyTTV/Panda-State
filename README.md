@@ -55,7 +55,8 @@ It keeps the name its stock firmware had on your network (0.7.6 and later), so
 the page is also at `http://PandaStatusP2.local` (P2), `http://PandaStatusV1.local`
 (original Status), `http://PandaLuxRGB.local` (Lux RGB) or
 `http://PandaRGBController.local` (RGB Controller). `http://pandastatus.local`
-works on every board.
+works on every board. To give it a name of your own, set **Name on the
+network** in the Wi-Fi section (0.7.7 and later); the names above keep working.
 
 ---
 

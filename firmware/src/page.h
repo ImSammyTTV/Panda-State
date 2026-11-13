@@ -72,7 +72,12 @@ details.card[open]>summary{margin-bottom:12px}
 .upd{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:14px 16px;border-radius:20px;background:rgba(var(--ink),.045);border:1px solid var(--line)}
 .upd b{font-size:15px}
 .prog{height:6px;border-radius:99px;background:rgba(var(--ink),.08);overflow:hidden;margin-top:10px}.prog i{display:block;height:100%;width:0;background:var(--c);transition:width .4s}
-.thm{flex:none;height:26px;padding:0 10px;font-size:12px;color:var(--t2)}
+/* The theme switch is an icon (half disc for Auto, sun, moon): the word took more room in the header than the choice deserves. */
+.thm{flex:none;width:30px;height:30px;padding:0;display:grid;place-items:center;color:var(--t2)}.thm svg{width:16px;height:16px}
+/* A select that sits among pill buttons takes their shape, so the row reads as one set of controls rather than a form field beside two buttons. */
+select.pill{width:auto;max-width:100%;height:34px;border:0;border-radius:999px;background-color:rgba(var(--ink),.09);padding:0 34px 0 14px;font-size:13px;appearance:none;-webkit-appearance:none;cursor:pointer;
+background-image:linear-gradient(45deg,transparent 50%,var(--t2) 50%),linear-gradient(135deg,var(--t2) 50%,transparent 50%);background-position:calc(100% - 18px) 15px,calc(100% - 13px) 15px;background-size:5px 5px;background-repeat:no-repeat}
+select.pill:hover{background-color:rgba(var(--ink),.17)}
 .tog{display:inline-flex;align-items:center;gap:8px;font-size:13px;color:var(--t2)}
 [hidden]{display:none!important}
 /* On a phone the board name, address and signal no longer fit beside the title and the theme switch: they take their own line underneath. */
@@ -111,7 +116,7 @@ details.card[open]>summary{margin-bottom:12px}
   <summary><h2>Add-ons</h2><span class="sum" id="adsum"></span><i class="chev"></i></summary>
   <div class="sub">Show something else on the bar when the printer has nothing to say.</div>
   <div class="tiles" id="adtiles"></div>
-  <div class="line"><label for="adwhen">Show it</label><select id="adwhen" style="width:auto;max-width:100%"><option value="idle">while the printer is not busy with a print</option><option value="always">always, even while printing</option></select><button id="adnone" hidden>Show nothing</button></div>
+  <div class="line"><label for="adwhen">Show it</label><select class="pill" id="adwhen"><option value="idle">while the printer is not busy with a print</option><option value="always">always, even while printing</option></select><button id="adnone" hidden>Show nothing</button></div>
   <div class="msg" id="admsg"></div>
   <div class="panel" id="storepanel">
     <div class="head2" style="margin:0"><h2>Store</h2><span class="sp"><span class="sub" id="storenote" style="align-self:center"></span><button id="adup">Upload a file</button><input id="adfile" type="file" accept=".json,application/json" hidden></span></div>
@@ -154,6 +159,7 @@ details.card[open]>summary{margin-bottom:12px}
   <summary><h2>Wi-Fi</h2><span class="sum" id="wifisum"></span><i class="chev"></i></summary>
   <div class="upd"><div class="grow"><b id="wifititle">…</b><div class="sub" id="wifisub"></div></div><button id="scan">Scan</button></div>
   <div class="line"><input class="grow" id="ssid" type="text" list="nets" placeholder="Network name" autocomplete="off"><datalist id="nets"></datalist><input class="grow" id="pass" type="password" placeholder="Password" autocomplete="off"><button class="go" id="wifi">Save and join</button></div>
+  <div class="line"><label for="hostname">Name on the network</label><input id="hostname" type="text" style="width:190px" autocomplete="off" spellcheck="false" autocapitalize="off"><span class="sub">.local</span><button id="hostsave">Save</button><span class="sub" id="hosthint"></span></div>
   <div class="msg" id="wifimsg"></div>
   <h2 style="margin-top:18px">The bar's own hotspot</h2>
   <div class="upd"><div class="grow"><b id="aptitle">…</b><div class="sub" id="apsub"></div></div></div>
@@ -238,13 +244,13 @@ function renderAddons(s){
   const f=s.addonFile, want=s.config.addon.show, tiles=[];
   if(f.from||f.loading||f.error){
     const posted=s.addons.find(a=>a.id===f.id);
-    tiles.push({id:f.id,name:f.name||(f.loading?'Loading…':'Add-on file'),desc:f.error||f.description,tag:f.from==='store'?'store':'file',
+    tiles.push({id:f.id,name:f.name||(f.loading?'Loading…':'Add-on file'),desc:f.error||f.description,tag:f.from==='store'?'':'file',
       sub:[f.kind!=='none'?f.kind:'',f.value!==undefined?'reads '+(+f.value).toPrecision(4):'',f.author?'by '+f.author:''].filter(Boolean).join(' · '),live:posted&&posted.fresh,bad:!!f.error,file:true});
   }
   for(const a of s.addons){if(f.from&&a.id===f.id)continue;tiles.push({id:a.id,name:a.name,tag:'program',sub:a.kind+' · '+(a.fresh?'posted '+a.age+' s ago':'stopped posting'),live:a.fresh});}
   /* Picked but nothing is running it: replaced by another add-on file, or a program that stopped. Said plainly, with a way out. */
   if(want&&!tiles.some(t=>t.id===want))tiles.push({id:want,name:want,desc:'Picked, but nothing is running it now: it was replaced, or the program that posted it has stopped. Use it again from the store, or clear it.',tag:'not running',bad:true,missing:true});
-  const html=tiles.length?tiles.map(t=>'<div class="tile'+(tiles.length===1?' wide':'')+'"'+(t.id&&t.id===want?' data-on':'')+'><div class="body"><div class="t"><i class="dot"'+(t.live?' data-live':'')+(t.bad?' data-bad':'')+'></i><span>'+esc(t.name)+'</span><em class="tag">'+t.tag+'</em></div>'
+  const html=tiles.length?tiles.map(t=>'<div class="tile'+(tiles.length===1?' wide':'')+'"'+(t.id&&t.id===want?' data-on':'')+'><div class="body"><div class="t"><i class="dot"'+(t.live?' data-live':'')+(t.bad?' data-bad':'')+'></i><span>'+esc(t.name)+'</span>'+(t.tag?'<em class="tag">'+t.tag+'</em>':'')+'</div>'
     +(t.desc?'<div class="d">'+esc(t.desc)+'</div>':'')+'<div class="sub">'+esc(t.sub||'')+(s.addonShowing&&s.addonShowing===t.id?' · on the bar now':'')+'</div></div>'
     +'<div class="acts">'+(t.missing?'<button data-pick="">Clear</button>':t.id?(t.id===want?'<button class="go" disabled>Picked</button>':'<button data-pick="'+esc(t.id)+'">Show this</button>'):'')+(t.file?'<button data-remove="1">Remove</button>':'')+'</div></div>').join('')
     :'<div class="empty">Nothing yet. Pick one from the store below, or upload a file of your own.</div>';
@@ -258,6 +264,7 @@ $('adtiles').onclick=async(e)=>{const b=e.target.closest('button');if(!b)return;
   if(b.dataset.remove){if(!confirm('Remove this add-on from the bar?'))return;const r=await post('/api/addonfile',{remove:true});$('admsg').textContent=r.message||'';}};
 $('adnone').onclick=()=>pick('');
 $('backup').onclick=()=>{location.href='/api/otherslot.bin';};
+$('hostsave').onclick=async()=>{busy=Date.now();const r=await post('/api/hostname',{name:$('hostname').value.trim()});$('hosthint').textContent=r.message||(r.ok?'Saved':'Not saved');};
 $('adup').onclick=()=>$('adfile').click();
 $('adfile').onchange=async()=>{const file=$('adfile').files[0];$('adfile').value='';if(!file)return;let obj;
   try{obj=JSON.parse(await file.text());}catch(e){$('admsg').textContent='That file is not valid JSON';return;}
@@ -278,7 +285,7 @@ function drawStore(){
     return '<div class="tile"'+(using?' data-on':'')+'><div class="t"><span>'+esc(a.name)+'</span><em class="tag">'+esc(a.kind)+'</em></div>'
       +(cols.length===25?'<div class="sw" data-f="'+esc(a.file)+'">'+cols.map(c=>'<i style="background:#'+c+'"></i>').join('')+'</div>':'')
       +'<div class="d">'+esc(a.description)+'</div><div class="sub">'+(a.author?'by '+esc(a.author):'')+'</div>'
-      +'<div class="acts">'+(using?'<button class="go" disabled>In use</button>':'<button data-url="'+esc(url)+'"'+(a.needs?' data-needs="'+esc(a.needs)+'"':'')+'>'+(a.needs==='place'?'Use for my town':'Use this')+'</button>')+'</div></div>';}).join('');
+      +'<div class="acts">'+(using?'<button class="go" disabled>In use</button>':'<button data-url="'+esc(url)+'"'+(a.needs?' data-needs="'+esc(a.needs)+'"':'')+'>'+({place:'Use for my town',symbol:'Choose a stock',countdown:'Set the time'}[a.needs]||'Use this')+'</button>')+'</div></div>';}).join('');
 }
 /* Store cards that move the way the bar would. Looks run through a copy of the bar's own effects (the same sums as render() and paintEffect() in the firmware), animations play their frames at their own speed, and live meters fill up to the level in their picture. */
 const SIMS={};
@@ -324,6 +331,9 @@ function lookSim(look){
 function storeSim(file,entry){
   if(file.look)return lookSim(file.look);
   /* The filament add-on shows whatever is loaded, so the card steps through a few common filament colours. */
+  /* A countdown empties over its time, then shows its done look. */
+  if(file.countdown){const c=hex3(file.countdown.colour||'#22C55E'),dark=[17,20,24],done=lookSim({colour:file.countdown.colour,effect:file.countdown.done||'rainbow',speed:50});
+    return (t,dt)=>{const p=(t%7)/5;if(p>=1)return done(t,dt);const n=25*(1-p);return Array.from({length:25},(_,i)=>i<Math.floor(n)?c:i<n?c.map((x,j)=>dark[j]+(x-dark[j])*(n-i)):dark);};}
   if(file.filament){const cols=['F72323','FEC600','00AE42','0086D6','FFFFFF'].map(hex3);return (t)=>Array(25).fill(cols[Math.floor(t/1.6)%cols.length]);}
   if(file.frames&&file.frames.list&&file.frames.list.length){const rows=file.frames.list.map(hexRow),fps=file.frames.fps||4;return (t)=>rows[Math.floor(t*fps)%rows.length];}
   const pic=hexRow(entry.preview);if(pic.length!==25)return null;
@@ -359,8 +369,33 @@ $('storelist').onclick=async(e)=>{const b=e.target.closest('button');if(!b||!b.d
     }catch(err){$('admsg').textContent=err.message||'That did not work';}
     setTimeout(openStore,2000);return;
   }
+  /* A share: the page asks for its code and hands the bar a copy with it filled in. */
+  if(b.dataset.needs==='symbol'){
+    const code=(prompt('Which stock? Its code, e.g. AAPL, or with the exchange for others: BHP.AX (ASX), VOD.L (London)')||'').trim().toUpperCase();if(!code)return;
+    if(!/^[A-Z0-9.^=-]{1,12}$/.test(code)){$('admsg').textContent='"'+code+'" does not look like a stock code';return;}
+    return useFilled(b,{'{symbol}':code},'Added '+code+'. The bar fetches its price every 5 minutes.');
+  }
+  /* A countdown: the page asks what for and when, and fills in now as the start, so the bar knows how full to begin. */
+  if(b.dataset.needs==='countdown'){
+    const label=(prompt('What is it counting down to? (shown as its name)','Countdown')||'').trim();if(!label)return;
+    const when=(prompt('When does it end? Date and time, e.g. 2026-12-25 07:00')||'').trim();if(!when)return;
+    const m=when.match(/^(\d{4})-(\d{1,2})-(\d{1,2})(?:[ T](\d{1,2}):(\d{2}))?$/);
+    if(!m){$('admsg').textContent='Write it as YYYY-MM-DD HH:MM, e.g. 2026-12-25 07:00';return;}
+    const p2=(n)=>String(n).padStart(2,'0'),end=new Date(+m[1],+m[2]-1,+m[3],+(m[4]||0),+(m[5]||0)),now=new Date();
+    if(!(end>now)){$('admsg').textContent='That time has already passed';return;}
+    const fmt=(d)=>d.getFullYear()+'-'+p2(d.getMonth()+1)+'-'+p2(d.getDate())+'T'+p2(d.getHours())+':'+p2(d.getMinutes());
+    return useFilled(b,{'{label}':label.replace(/["\\]/g,'').slice(0,27),'{from}':fmt(now),'{to}':fmt(end)},'Counting down to '+label+', '+end.toLocaleString()+'.');
+  }
   b.disabled=true;b.textContent='Adding…';
   const r=await post('/api/addonfile',{url:b.dataset.url});$('admsg').textContent=r.ok?'Added. The bar is fetching it from GitHub.':(r.message||'Not accepted');setTimeout(openStore,3000);};
+async function useFilled(b,fill,said){
+  b.disabled=true;b.textContent='Adding…';
+  try{let text=await fetch(b.dataset.url,{cache:'no-store'}).then(r=>r.text());
+    for(const [k,v] of Object.entries(fill))text=text.split(k).join(v);
+    const r=await post('/api/addonfile',{file:JSON.parse(text)});$('admsg').textContent=r.ok?said:(r.message||'Not accepted');}
+  catch(err){$('admsg').textContent=err.message||'That did not work';}
+  setTimeout(openStore,2000);
+}
 function renderUpdate(s){
   const u=s.update,v=(t)=>String(t).replace(/^v/,'');
   $('updtitle').textContent=u.phase==='downloading'?'Installing '+v(u.latest)+' · '+u.percent+'%':u.phase==='installed'?u.message
@@ -482,6 +517,8 @@ async function tick(){
   $('schedsum').textContent=sc.enabled?'Dark '+sc.from+' to '+sc.to+(s.clock.dark?' · dark now':''):'Off';
   $('prsum').textContent=$('prstate').textContent;
   $('wifisum').textContent=$('wifititle').textContent+(s.ap.up?' · hotspot on':'');
+  if(s.hostname){if(document.activeElement!==$('hostname')&&Date.now()-busy>3000)$('hostname').value=s.hostname;
+    const h='http://'+s.hostname+'.local';$('hosthint').innerHTML='<a href="'+h+'">'+h+'</a>'+(s.hostname!==s.hostnameDefault?' · empty and Save puts back '+s.hostnameDefault:'');}
   $('fwsum').textContent=$('updtitle').textContent;
   const h=s.homeAssistant;
   $('hatitle').textContent=!h.on?'Off':h.connected?'Connected to '+h.host:'Not connected'+(h.error?': '+h.error:'');
@@ -496,7 +533,10 @@ document.querySelectorAll('details.card').forEach(d=>{
 });
 /* The page theme: Auto follows the device, Light and Dark pin it for this browser only, since a phone and a desktop can want different things. */
 const THEMES=['auto','light','dark'],THEME_NAMES={auto:'Auto',light:'Light',dark:'Dark'};
-function paintTheme(){const t=document.documentElement.dataset.theme||'auto';$('thm').textContent=THEME_NAMES[t];$('thm').title='Page theme: '+(t==='auto'?'following this device':THEME_NAMES[t].toLowerCase())+'. Click to change.';}
+const THEME_ICONS={auto:'<circle cx="12" cy="12" r="8.5"/><path d="M12 3.5a8.5 8.5 0 0 1 0 17z" fill="currentColor" stroke="none"/>',
+  light:'<circle cx="12" cy="12" r="4"/><path d="M12 2.5v2.5M12 19v2.5M2.5 12H5M19 12h2.5M5.3 5.3l1.8 1.8M16.9 16.9l1.8 1.8M5.3 18.7l1.8-1.8M16.9 7.1l1.8-1.8"/>',
+  dark:'<path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a7 7 0 0 0 10.5 10.5z"/>'};
+function paintTheme(){const t=document.documentElement.dataset.theme||'auto';$('thm').innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">'+THEME_ICONS[t]+'</svg>';$('thm').setAttribute('aria-label','Page theme: '+THEME_NAMES[t]);$('thm').title='Page theme: '+(t==='auto'?'following this device':THEME_NAMES[t].toLowerCase())+'. Click to change.';}
 $('thm').onclick=()=>{const now=document.documentElement.dataset.theme||'auto',next=THEMES[(THEMES.indexOf(now)+1)%3];
   if(next==='auto')delete document.documentElement.dataset.theme;else document.documentElement.dataset.theme=next;
   try{if(next==='auto')localStorage.removeItem('theme');else localStorage.setItem('theme',next);}catch(e){}paintTheme();};

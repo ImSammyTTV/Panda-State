@@ -10,6 +10,24 @@
                        "preview":  "FEC600FEC600FEC600FEC600FEC600FEC600FEC600FEC600FEC600FEC600FEC600FEC600FEC600FEC600FEC600FEC600FEC600FEC600FEC600FEC600FEC600FEC600FEC600FEC600FEC600"
                    },
                    {
+                       "file":  "countdown.json",
+                       "name":  "Countdown",
+                       "description":  "Counts down to a date and time you choose: the bar starts full and empties as it gets closer, then celebrates for 12 hours when it arrives.",
+                       "author":  "Sam",
+                       "kind":  "countdown",
+                       "preview":  "F59E0BF59E0BF59E0BF59E0BF59E0BF59E0BF59E0BF59E0BF59E0BF59E0BF59E0BF59E0BF59E0BF59E0BF59E0BF59E0BF59E0BF59E0BF59E0BF59E0BF59E0BF59E0BF59E0BF59E0BF59E0B",
+                       "needs":  "countdown"
+                   },
+                   {
+                       "file":  "stock-ticker.json",
+                       "name":  "Stock, today",
+                       "description":  "How a share is doing today, for any stock code you choose: half way is no change, full is up 5% or more, empty is down 5% or more. Updated every 5 minutes; prices can be delayed.",
+                       "author":  "Sam",
+                       "kind":  "live meter",
+                       "preview":  "22C55E22C55E22C55E22C55E22C55E22C55E22C55E22C55E22C55E22C55E22C55E22C55E22C55E22C55E22C55E22C55E22C55E111418111418111418111418111418111418111418111418",
+                       "needs":  "symbol"
+                   },
+                   {
                        "file":  "weather-temperature.json",
                        "name":  "Temperature",
                        "description":  "The temperature outside now, as a meter from -5 C (empty) to 40 C (full). Updated every 15 minutes. Weather data by Open-Meteo.com (CC BY 4.0).",

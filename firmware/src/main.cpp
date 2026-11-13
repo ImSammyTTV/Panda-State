@@ -49,7 +49,7 @@
 
 /* What the firmware calls itself on its page and in /api/status. Plain and generic, so it says what it is on anyone's network. */
 #define FW_NAME "panda"
-#define FW_VERSION "0.7.6"
+#define FW_VERSION "0.7.7"
 /* Where new releases and the add-on store live. A release must carry a
    panda-<board>-custom-<version>.bin for each board and a SHA256SUMS.txt that lists them. */
 #define UPDATE_REPO "ImSammyTTV/Panda-State"
@@ -96,6 +96,15 @@
 #define STOCK_HOST "PandaStatusP2"
 #endif
 static const char *BUILD_ID = FW_VERSION " " __DATE__ " " __TIME__;
+
+static char hostName[33] = STOCK_HOST;  // what the bar answers to on the network, without ".local"
+static bool hostNameValid(const char *name) {
+  const size_t len = strlen(name);
+  if (len < 1 || len > 32 || name[0] == '-' || name[len - 1] == '-') return false;
+  for (const char *c = name; *c; c++) if (!isalnum((unsigned char)*c) && *c != '-') return false;
+  return true;
+}
+static void handleHostName();
 
 /* Measured, not assumed: see HARDWARE.md. GPIO 5 is the strip on both the P2 and the original Panda Status. */
 static const uint8_t LED_PIN = 5;
@@ -447,8 +456,7 @@ static void prSetError(const char *text) { strlcpy(prError, text, sizeof prError
  * values the bar needs. The path is what tells a tray's "id" from an AMS
  * unit's, so the loaded filament can be found without holding the message.
  *
- * Filament, as Bambu Studio numbers it (and Bambuddy documents, from Studio's
- * own source): every AMS tray has a global id, ams_id * 4 + slot for a
+ * Filament, as Bambu Studio numbers it: every AMS tray has a global id, ams_id * 4 + slot for a
  * regular AMS, the unit's own id (128-135) for an AMS HT, 254/255 for the
  * external spools. A single-nozzle printer says which is loaded in
  * ams.tray_now. A dual-nozzle one (H2D, X2D) cannot say it in one number, so
@@ -1772,6 +1780,8 @@ static void handleStatus() {
   /* The largest single piece: a TLS session needs one big block, so this, not the total, says whether HTTPS will start. */
   doc["heapBlock"] = ESP.getMaxAllocHeap();
   doc["ip"] = WiFi.localIP().toString();
+  doc["hostname"] = hostName;
+  doc["hostnameDefault"] = STOCK_HOST;
   doc["rssi"] = WiFi.status() == WL_CONNECTED ? WiFi.RSSI() : 0;
   doc["setupNetwork"] = apUp;
   doc["wifiName"] = WiFi.status() == WL_CONNECTED ? WiFi.SSID() : wifiSsid;
@@ -2512,8 +2522,21 @@ static bool updInstall() {
  *                 "colour": "#RRGGBB", "every": 30-86400 }   a live meter
  *   }
  */
-enum FileKind : uint8_t { FA_NONE, FA_STATIC, FA_FRAMES, FA_SOURCE, FA_FILAMENT };
-static const char *FA_NAMES[] = {"none", "static", "frames", "source", "filament"};
+enum FileKind : uint8_t { FA_NONE, FA_STATIC, FA_FRAMES, FA_SOURCE, FA_FILAMENT, FA_COUNTDOWN };
+static const char *FA_NAMES[] = {"none", "static", "frames", "source", "filament", "countdown"};
+/* A countdown: a meter that drains from "from" to "to" (local times, in the
+   bar's own time zone), then the done look for doneHours, then nothing. */
+static time_t faCdFrom = 0, faCdTo = 0;
+static uint8_t faCdDone = FX_RAINBOW;
+static uint16_t faCdDoneHours = 12;
+static bool parseLocalTime(const char *text, time_t &out) {
+  if (!text) return false;
+  struct tm t = {};
+  if (!strptime(text, "%Y-%m-%dT%H:%M", &t)) return false;
+  t.tm_isdst = -1;  // the zone rule decides, so a countdown across a daylight-saving change still ends on the hour asked
+  out = mktime(&t);
+  return out > 0;
+}
 static uint8_t faFilEffect = FX_SOLID, faFilSpeed = 40;
 static const int FA_MAX_FRAMES = 30;
 static const size_t FA_MAX_UPLOAD = 4000;         // what fits comfortably in the settings store
@@ -2523,6 +2546,7 @@ static bool faPick = false;                      // show it as soon as it loads 
 static uint8_t faKind = FA_NONE;
 static char faId[16] = "", faName[28] = "", faAuthor[40] = "";
 static String faUrl, faDesc, faError, faShow, faSrcUrl, faPath;
+static String faBase;  // a second path: when set, the meter shows the percentage change from it to path (a share price against yesterday's close)
 static uint8_t faFrames[FA_MAX_FRAMES][LED_COUNT][3];
 static uint8_t faFrameCount = 0, faFps = 4, faFrameAt = 0;
 static float faMin = 0, faMax = 100, faValue = NAN;
@@ -2570,11 +2594,26 @@ static const char *faLoad(const String &text) {
     faFilEffect = fx;
     faFilSpeed = constrain(doc["filament"]["speed"] | 40, 1, 100);
     faKind = FA_FILAMENT;
+  } else if (!doc["countdown"].isNull()) {
+    /* {"countdown":{"from":"2026-11-14T09:00","to":"2026-12-25T07:00","colour":"#22C55E","done":"rainbow","doneHours":12}} */
+    JsonVariantConst cd = doc["countdown"];
+    if (!parseLocalTime(cd["to"] | "", faCdTo)) return "countdown.to is a local time, YYYY-MM-DDTHH:MM";
+    if (!parseLocalTime(cd["from"] | "", faCdFrom)) return "countdown.from is a local time, YYYY-MM-DDTHH:MM";
+    if (faCdTo <= faCdFrom) return "countdown.to must be after countdown.from";
+    faColour = 0x22C55E;
+    if (!cd["colour"].isNull() && !parseColour(cd["colour"].as<const char *>(), faColour)) return "countdown.colour must be #RRGGBB";
+    const int fx = findName(FX_NAMES, FX_COUNT, cd["done"] | "rainbow");
+    if (fx < 0) return "countdown.done is not one of the effects";
+    faCdDone = fx;
+    faCdDoneHours = constrain(cd["doneHours"] | 12, 0, 168);
+    faKind = FA_COUNTDOWN;
   } else if (!doc["source"].isNull()) {
     JsonVariantConst src = doc["source"];
     faSrcUrl = src["url"] | "";
     if (!faSrcUrl.startsWith("http://") && !faSrcUrl.startsWith("https://")) return "source.url must be an http:// or https:// address";
     faPath = src["path"] | "";
+    faBase = src["base"] | "";
+    if (faBase.length() && !faPath.length()) return "source.base needs a source.path to compare with it";
     faMin = src["min"] | 0.0f;
     faMax = src["max"] | 100.0f;
     if (faMax == faMin) return "source.min and source.max must differ";
@@ -2599,6 +2638,50 @@ static const char *faLoad(const String &text) {
   return nullptr;
 }
 
+/* Paths like "data.0.price": numbers index arrays, anything else names a key. */
+static void pathFilter(JsonDocument &filter, const String &path) {
+  JsonVariant cursor = filter.as<JsonVariant>();
+  int from = 0;
+  while (from <= (int)path.length()) {
+    int dot = path.indexOf('.', from);
+    if (dot < 0) dot = path.length();
+    const String part = path.substring(from, dot);
+    const bool index = part.length() && strspn(part.c_str(), "0123456789") == part.length();
+    // Merged into what is already there, so two paths through the same object both survive the filter.
+    if (index) {
+      JsonArray list = cursor.is<JsonArray>() ? cursor.as<JsonArray>() : cursor.to<JsonArray>();
+      cursor = list.size() ? list[0].as<JsonVariant>() : list.add<JsonVariant>();
+    } else {
+      JsonObject obj = cursor.is<JsonObject>() ? cursor.as<JsonObject>() : cursor.to<JsonObject>();
+      JsonVariant next = obj[part];
+      cursor = next.isNull() ? obj[part].to<JsonVariant>() : next;
+    }
+    from = dot + 1;
+  }
+  cursor.set(true);
+}
+
+static bool pathNumber(JsonDocument &doc, const String &path, float &out) {
+  JsonVariantConst v = doc.as<JsonVariantConst>();
+  int from = 0;
+  while (from <= (int)path.length() && !v.isNull()) {
+    int dot = path.indexOf('.', from);
+    if (dot < 0) dot = path.length();
+    const String part = path.substring(from, dot);
+    const bool index = part.length() && strspn(part.c_str(), "0123456789") == part.length();
+    v = index ? v[part.toInt()] : v[part];
+    from = dot + 1;
+  }
+  if (v.is<float>()) { out = v.as<float>(); return true; }
+  if (v.is<const char *>()) {
+    char *end = nullptr;
+    const char *text = v.as<const char *>();
+    out = strtof(text, &end);
+    return end != text;
+  }
+  return false;
+}
+
 /* A number out of a JSON answer, by a path like "data.0.price"; an empty path means the answer is the number. */
 static bool faFetchValue(float &out) {
   Fetch f;
@@ -2613,40 +2696,19 @@ static bool faFetchValue(float &out) {
     if (end == body.c_str()) { faError = "The answer is not a number"; return false; }
     return true;
   }
-  /* Only the path is kept from the answer, so a large reply costs little memory. */
+  /* Only the paths are kept from the answer, so a large reply costs little memory. */
   JsonDocument filter;
-  JsonVariant cursor = filter.to<JsonVariant>();
-  int from = 0;
-  while (from <= (int)faPath.length()) {
-    int dot = faPath.indexOf('.', from);
-    if (dot < 0) dot = faPath.length();
-    const String part = faPath.substring(from, dot);
-    const bool index = part.length() && strspn(part.c_str(), "0123456789") == part.length();
-    cursor = index ? cursor.to<JsonArray>().add<JsonVariant>() : cursor.to<JsonObject>()[part].to<JsonVariant>();
-    from = dot + 1;
-  }
-  cursor.set(true);
+  pathFilter(filter, faPath);
+  if (faBase.length()) pathFilter(filter, faBase);
   JsonDocument doc;
   if (deserializeJson(doc, body, DeserializationOption::Filter(filter))) { faError = "The answer is not JSON"; return false; }
-  JsonVariantConst v = doc.as<JsonVariantConst>();
-  from = 0;
-  while (from <= (int)faPath.length() && !v.isNull()) {
-    int dot = faPath.indexOf('.', from);
-    if (dot < 0) dot = faPath.length();
-    const String part = faPath.substring(from, dot);
-    const bool index = part.length() && strspn(part.c_str(), "0123456789") == part.length();
-    v = index ? v[part.toInt()] : v[part];
-    from = dot + 1;
-  }
-  if (v.is<float>()) { out = v.as<float>(); return true; }
-  if (v.is<const char *>()) {
-    char *end = nullptr;
-    const char *text = v.as<const char *>();
-    out = strtof(text, &end);
-    if (end != text) return true;
-  }
-  faError = "Nothing numeric at \"" + faPath + "\"";
-  return false;
+  float value;
+  if (!pathNumber(doc, faPath, value)) { faError = "Nothing numeric at \"" + faPath + "\""; return false; }
+  if (!faBase.length()) { out = value; return true; }
+  float base;
+  if (!pathNumber(doc, faBase, base) || base == 0) { faError = "Nothing to compare with at \"" + faBase + "\""; return false; }
+  out = (value - base) / base * 100.0f;
+  return true;
 }
 
 static void faRemove() {
@@ -2758,6 +2820,36 @@ static void faTick() {
       *slot = next;
     }
     xSemaphoreGive(addonLock);
+  } else if (faKind == FA_COUNTDOWN && now - faPushedAt >= 1000) {
+    faPushedAt = now;
+    /* Its dates are local times, so nothing is shown until the clock and zone are known: a guess would be off by hours. */
+    if (!timeKnown()) { faError = "Waiting for the clock"; return; }
+    const time_t t = time(nullptr);
+    const bool done = t >= faCdTo;
+    if (done && t >= faCdTo + (time_t)faCdDoneHours * 3600) { faError = ""; return; }  // finished and celebrated: the bar goes back to the printer
+    faError = "";
+    xSemaphoreTake(addonLock, portMAX_DELAY);
+    if (Addon *slot = addonSlotFor(faId)) {
+      Addon next = {};
+      next.used = true;
+      strlcpy(next.id, faId, sizeof next.id);
+      strlcpy(next.name, faName, sizeof next.name);
+      next.at = now;
+      next.ttlMs = 10000;
+      if (done) {
+        next.kind = ADDON_LOOK;
+        next.look = Look(faColour, faCdDone, 50);
+        next.fill = 100;
+      } else {
+        // What is left, as a meter that empties: full when it was set, empty at the moment it ends.
+        next.kind = ADDON_METERS;
+        next.meterCount = 1;
+        next.meterValue[0] = constrain((float)(faCdTo - t) / (float)(faCdTo - faCdFrom) * 100.0f, 0.0f, 100.0f);
+        next.meterColour[0] = faColour;
+      }
+      *slot = next;
+    }
+    xSemaphoreGive(addonLock);
   } else if (faKind == FA_SOURCE) {
     if ((!faFetchedAt || now - faFetchedAt >= faEveryMs) && now - faTriedAt > 30000 && WiFi.status() == WL_CONNECTED && timeKnown()) {
       faTriedAt = now;
@@ -2816,6 +2908,7 @@ static void onlineToJson(JsonDocument &doc) {
   file["loading"] = (bool)faReload;
   file["error"] = faError;
   if (faKind == FA_SOURCE && !isnan(faValue)) file["value"] = faValue;
+  if (faKind == FA_COUNTDOWN && timeKnown()) file["endsIn"] = (long)(faCdTo - time(nullptr));
 
   /* Updates from GitHub. */
   JsonObject upd = doc["update"].to<JsonObject>();
@@ -2866,8 +2959,8 @@ static void handleAddonFile() {
     JsonDocument probe;
     deserializeJson(probe, text);
     if (const char *bad = addonIdError(probe["id"].as<const char *>())) return sendResult(false, bad);
-    if (probe["look"].isNull() && probe["meters"].isNull() && probe["frame"].isNull() && probe["frames"].isNull() && probe["source"].isNull() && probe["filament"].isNull())
-      return sendResult(false, "Give one of look, meters, frame, frames, source or filament");
+    if (probe["look"].isNull() && probe["meters"].isNull() && probe["frame"].isNull() && probe["frames"].isNull() && probe["source"].isNull() && probe["filament"].isNull() && probe["countdown"].isNull())
+      return sendResult(false, "Give one of look, meters, frame, frames, source, filament or countdown");
     /* Kept as bytes, not a string: a string must fit in one page of the
        settings store, and a 1.8 KB animation did not (measured, 0.5.9). */
     if (prefs.putBytes("fajson", text.c_str(), text.length()) != text.length()) {
@@ -3271,29 +3364,61 @@ void setup() {
   server.on("/api/wifi/scan", HTTP_GET, handleWifiScan);
   server.on("/api/update", HTTP_POST, handleUpdateApi);
   server.on("/api/ha", HTTP_POST, handleHa);
+  server.on("/api/hostname", HTTP_POST, handleHostName);
   server.on("/update", HTTP_POST, handleUpdateDone, handleUpdateChunk);
   server.onNotFound([]() { sendResult(false, "Not found"); });
   server.begin();
-  MDNS.begin(STOCK_HOST);
-  mdns_instance_name_set(STOCK_HOST);
+  {
+    const String saved = prefs.getString("host", "");
+    if (saved.length() && hostNameValid(saved.c_str())) strlcpy(hostName, saved.c_str(), sizeof hostName);
+  }
+  MDNS.begin(hostName);
+  mdns_instance_name_set(hostName);
   MDNS.addService("http", "tcp", 80);
 }
 
-/* The second name is a delegated host, which mDNS answers with a fixed
-   address, so it is set again whenever the bar's address changes (DHCP,
-   another network, the hotspot). */
-static void keepSecondName() {
+/* The other names (stock's, and "pandastatus") are delegated hosts, which
+   mDNS answers with a fixed address, so they are set again whenever the
+   bar's address changes (DHCP, another network) or the owner renames it. */
+static void keepOtherNames(bool force = false) {
   static uint32_t had = 0;
+  static char added[2][33] = {"", ""};
   const IPAddress ip = WiFi.status() == WL_CONNECTED ? WiFi.localIP() : IPAddress();
-  if ((uint32_t)ip == had) return;
-  if (had) mdns_delegate_hostname_remove("pandastatus");
+  if ((uint32_t)ip == had && !force) return;
+  for (auto &name : added) if (name[0]) { mdns_delegate_hostname_remove(name); name[0] = 0; }
   had = (uint32_t)ip;
   if (!had) return;
   mdns_ip_addr_t addr = {};
   addr.addr.type = ESP_IPADDR_TYPE_V4;
   addr.addr.u_addr.ip4.addr = had;
   addr.next = nullptr;
-  mdns_delegate_hostname_add("pandastatus", &addr);
+  const char *others[2] = {STOCK_HOST, "pandastatus"};
+  for (int i = 0; i < 2; i++) {
+    // mDNS names ignore case, so the owner's own name standing in for one of these is not added twice.
+    if (strcasecmp(others[i], hostName) == 0) continue;
+    if (mdns_delegate_hostname_add(others[i], &addr) == ESP_OK) strlcpy(added[i], others[i], sizeof added[i]);
+  }
+}
+
+/* The owner's own .local name. Empty puts back the stock name. Applied at
+   once: mDNS takes a new host name while running, and the old names keep
+   answering, so a page open on any of them is not stranded. */
+static void handleHostName() {
+  JsonDocument doc;
+  if (!readBody(doc)) return;
+  String name = doc["name"] | "";
+  name.trim();
+  if (name.endsWith(".local")) name.remove(name.length() - 6);
+  if (name.length() && !hostNameValid(name.c_str()))
+    return sendResult(false, "A name is 1-32 letters, digits and hyphens, not starting or ending with a hyphen");
+  if (name.length()) prefs.putString("host", name);
+  else prefs.remove("host");
+  strlcpy(hostName, name.length() ? name.c_str() : STOCK_HOST, sizeof hostName);
+  mdns_hostname_set(hostName);
+  mdns_instance_name_set(hostName);
+  keepOtherNames(true);
+  const String now = String("Now at http://") + hostName + ".local";
+  sendResult(true, now.c_str());
 }
 
 void loop() {
@@ -3309,7 +3434,7 @@ void loop() {
   if (millis() - lastWatchAt >= 1000) {
     lastWatchAt = millis();
     watchTrial();
-    keepSecondName();
+    keepOtherNames();
     trackPrinter();
     /* The filament in use, remembered (and kept across restarts) so it can still be shown once the printer has unloaded it. */
     if (printerFresh()) {

@@ -1,0 +1,15 @@
+{
+    "id":  "stock",
+    "name":  "{symbol} today",
+    "description":  "How {symbol} is doing today: half way is no change, full is up 5% or more, empty is down 5% or more. Updated every 5 minutes; prices can be delayed.",
+    "author":  "Sam",
+    "source":  {
+                   "url":  "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?range=1d&interval=1d",
+                   "path":  "chart.result.0.meta.regularMarketPrice",
+                   "base":  "chart.result.0.meta.chartPreviousClose",
+                   "min":  -5,
+                   "max":  5,
+                   "colour":  "#22C55E",
+                   "every":  300
+               }
+}

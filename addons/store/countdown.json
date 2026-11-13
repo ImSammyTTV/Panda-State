@@ -1,0 +1,13 @@
+{
+    "id":  "countdown",
+    "name":  "{label}",
+    "description":  "Counts down to the time you chose: the bar starts full and empties as it gets closer, then celebrates for 12 hours when it arrives.",
+    "author":  "Sam",
+    "countdown":  {
+                      "from":  "{from}",
+                      "to":  "{to}",
+                      "colour":  "#F59E0B",
+                      "done":  "rainbow",
+                      "doneHours":  12
+                  }
+}
