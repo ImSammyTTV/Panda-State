@@ -32,6 +32,7 @@ README's API section).
 | `frame` | All 25 LEDs: a list of 25 `#RRGGBB`, or one string of 150 hex digits |
 | `frames` | An animation: `{"fps": 1-20, "list": ["150 hex digits", …]}`, up to 30 frames, looped |
 | `source` | A live meter from a web address: `{"url", "path", "min", "max", "colour", "every"}` |
+| `filament` | The colour of the filament the printer is using: `{"effect": "solid", "speed": 1-100}`. Between prints, the last one used, breathing slowly. Needs firmware 0.7.3 or later and a Bambu printer |
 
 Effects: solid, breathe, fill, flash, chase, rainbow, gradient, waves, scroll,
 theatre, scanner, meteor, fire, twinkle, sparkle, rain, aurora.

@@ -2,6 +2,14 @@
     "version":  1,
     "addons":  [
                    {
+                       "file":  "loaded-filament.json",
+                       "name":  "Loaded filament",
+                       "description":  "The colour of the filament the printer is using, from its AMS or external spool. Between prints, the last one used, breathing slowly. Bambu printers only.",
+                       "author":  "Sam",
+                       "kind":  "printer",
+                       "preview":  "FEC600FEC600FEC600FEC600FEC600FEC600FEC600FEC600FEC600FEC600FEC600FEC600FEC600FEC600FEC600FEC600FEC600FEC600FEC600FEC600FEC600FEC600FEC600FEC600FEC600"
+                   },
+                   {
                        "file":  "weather-temperature.json",
                        "name":  "Temperature",
                        "description":  "The temperature outside now, as a meter from -5 C (empty) to 40 C (full). Updated every 15 minutes. Weather data by Open-Meteo.com (CC BY 4.0).",

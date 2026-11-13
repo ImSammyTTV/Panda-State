@@ -309,6 +309,8 @@ function lookSim(look){
 }
 function storeSim(file,entry){
   if(file.look)return lookSim(file.look);
+  /* The filament add-on shows whatever is loaded, so the card steps through a few common filament colours. */
+  if(file.filament){const cols=['F72323','FEC600','00AE42','0086D6','FFFFFF'].map(hex3);return (t)=>Array(25).fill(cols[Math.floor(t/1.6)%cols.length]);}
   if(file.frames&&file.frames.list&&file.frames.list.length){const rows=file.frames.list.map(hexRow),fps=file.frames.fps||4;return (t)=>rows[Math.floor(t*fps)%rows.length];}
   const pic=hexRow(entry.preview);if(pic.length!==25)return null;
   if(!file.source)return ()=>pic;
@@ -454,7 +456,7 @@ async function tick(){
   const p=s.printer;
   const pk=p.type==='klipper'?'Klipper at ':'';
   $('prstate').textContent=!p.paired?'Not paired.'
-    :p.connected?'Linked to '+pk+p.ip+(p.gcode?' · printer says '+p.gcode+(p.percent!==undefined?' '+p.percent+'%':'')+(p.bed!==undefined?' · bed '+Math.round(p.bed)+'°':''):' · waiting for its first message')
+    :p.connected?'Linked to '+pk+p.ip+(p.gcode?' · printer says '+p.gcode+(p.percent!==undefined?' '+p.percent+'%':'')+(p.bed!==undefined?' · bed '+Math.round(p.bed)+'°':'')+(p.filament?' · '+(p.filament.loaded?'':'last used ')+(p.filament.type||'filament')+' '+p.filament.colour:''):' · waiting for its first message')
     :'Paired with '+p.ip+', not linked'+(p.error?': '+p.error:'')+'.';
   if(Date.now()-busy>3000){$('bri').value=s.config.brightness;} $('briv').textContent=$('bri').value+'%';
   const o=s.otherSlot;

@@ -47,7 +47,7 @@
 
 /* What the firmware calls itself on its page and in /api/status. Plain and generic, so it says what it is on anyone's network. */
 #define FW_NAME "panda"
-#define FW_VERSION "0.7.2"
+#define FW_VERSION "0.7.3"
 /* Where new releases and the add-on store live. A release must carry a
    panda-<board>-custom-<version>.bin for each board and a SHA256SUMS.txt that lists them. */
 #define UPDATE_REPO "ImSammyTTV/Panda-State"
@@ -382,6 +382,8 @@ static volatile bool prRestart = false;       // settings changed: drop the link
 /* Set while a firmware download runs: two TLS sessions at once leave the chip
    too little memory to be sure of finishing the one that matters. */
 static volatile bool prPaused = false;
+/* Set for the few seconds an add-on or update download needs the memory the printer link's secure session holds. */
+static volatile bool prHold = false;
 static volatile bool prConnected = false;
 static char prError[48] = "";
 static char prGcode[12] = "";                 // RUNNING, PAUSE, FINISH, IDLE, FAILED, PREPARE ...
@@ -392,25 +394,135 @@ static const uint32_t PRINTER_STALE_MS = 30000;
 
 static void prSetError(const char *text) { strlcpy(prError, text, sizeof prError); }
 
-/* Stream scanner: finds "key": value pairs for a handful of keys at any depth, one character at a time. */
-static const char *SCAN_KEYS[] = {"gcode_state", "mc_percent", "bed_temper"};
+/**
+ * Stream scanner: reads the printer's JSON one character at a time, keeping
+ * only the path to where it is (the key of each open container) and the few
+ * values the bar needs. The path is what tells a tray's "id" from an AMS
+ * unit's, so the loaded filament can be found without holding the message.
+ *
+ * Filament, as Bambu Studio numbers it (and Bambuddy documents, from Studio's
+ * own source): every AMS tray has a global id, ams_id * 4 + slot for a
+ * regular AMS, the unit's own id (128-135) for an AMS HT, 254/255 for the
+ * external spools. A single-nozzle printer says which is loaded in
+ * ams.tray_now. A dual-nozzle one (H2D, X2D) cannot say it in one number, so
+ * each nozzle reports its own in device.extruder.info[].snow, encoded
+ * (ams_id << 8) | slot with 0xFFFF for empty, and bit 8 of
+ * device.extruder.state is the nozzle in use.
+ */
 static struct {
   bool inString, escaped, tooLong, hadString, awaiting, capturing, valueIsString;
-  char text[20]; uint8_t length;
+  char text[20]; uint8_t length;           // the string just read; a key if a colon follows
+  char key[20];                            // the key whose value comes next
   char value[16]; uint8_t valueLength;
-  int8_t key;
+  char path[8][14]; uint8_t depth;         // the key of each open container, "" for an array element
   char gcode[12]; int percent; float bed; bool gotGcode, gotPercent, gotBed;
+  int trayNow; bool gotTrayNow;
+  int extState; bool gotExtState;
+  /* The tray, AMS unit or nozzle being read, until its object closes. */
+  int slotId; uint32_t slotColour; bool slotHasColour; char slotType[10];
+  int unitId; uint8_t unitCount; int unitSlot[4]; uint32_t unitColour[4]; bool unitHas[4]; char unitType[4][10];
+  int extId, extSnow;
 } scan;
 
-static void scanReset() { memset(&scan, 0, sizeof scan); scan.key = -1; }
+/* What the printer has said about its filament, kept between messages: printers send only what changed. */
+struct FilamentTray { int16_t tray; uint32_t colour; char type[10]; };
+static FilamentTray filTrays[16];
+static uint8_t filTrayCount = 0;
+static volatile int prTrayNow = -1;          // -1 never heard
+static volatile int prActiveExt = 0;
+static int prSnow[2] = {-1, -1};             // -1 never heard; 0xFFFF empty
+static bool prSnowSeen = false;
+
+static void filRemember(int tray, uint32_t colour, bool has, const char *type) {
+  for (int i = 0; i < filTrayCount; i++)
+    if (filTrays[i].tray == tray) {
+      if (!has) { filTrays[i] = filTrays[--filTrayCount]; return; }   // an emptied tray is forgotten
+      filTrays[i].colour = colour; strlcpy(filTrays[i].type, type, sizeof filTrays[i].type);
+      return;
+    }
+  if (!has || filTrayCount >= 16) return;
+  filTrays[filTrayCount].tray = tray; filTrays[filTrayCount].colour = colour;
+  strlcpy(filTrays[filTrayCount].type, type, sizeof filTrays[filTrayCount].type);
+  filTrayCount++;
+}
+
+/* "F72323FF" is colour then alpha; an alpha of 00 (or no colour) is an empty tray. */
+static bool trayColour(const char *text, uint32_t &out) {
+  if (strlen(text) < 6) return false;
+  char hex[7]; memcpy(hex, text, 6); hex[6] = 0;
+  if (strspn(hex, "0123456789abcdefABCDEF") != 6) return false;
+  if (strlen(text) >= 8 && text[6] == '0' && text[7] == '0') return false;
+  out = strtoul(hex, nullptr, 16);
+  return true;
+}
+
+static const char *scanUp(int n) { return scan.depth >= n ? scan.path[scan.depth - n] : "\x01"; }
+
+static void scanReset() { memset(&scan, 0, sizeof scan); scan.slotId = scan.unitId = scan.extId = scan.extSnow = -1; }
 
 static void scanFinish() {
   scan.value[scan.valueLength] = 0;
-  if (scan.key == 0) { strlcpy(scan.gcode, scan.value, sizeof scan.gcode); scan.gotGcode = true; }
-  else if (scan.key == 1) { scan.percent = atoi(scan.value); scan.gotPercent = true; }
-  else if (scan.key == 2) { scan.bed = atof(scan.value); scan.gotBed = true; }
   scan.capturing = false;
-  scan.key = -1;
+  const char *k = scan.key, *v = scan.value;
+  const char *p1 = scanUp(1), *p2 = scanUp(2), *p3 = scanUp(3);
+  if (!strcmp(k, "gcode_state")) { strlcpy(scan.gcode, v, sizeof scan.gcode); scan.gotGcode = true; }
+  else if (!strcmp(k, "mc_percent")) { scan.percent = atoi(v); scan.gotPercent = true; }
+  else if (!strcmp(k, "bed_temper")) { scan.bed = atof(v); scan.gotBed = true; }
+  else if (!strcmp(k, "tray_now") && !strcmp(p1, "ams")) { scan.trayNow = atoi(v); scan.gotTrayNow = true; }
+  else if (!strcmp(k, "state") && !strcmp(p1, "extruder")) { scan.extState = atoi(v); scan.gotExtState = true; }
+  /* A tray: inside ams.ams[].tray[], or an external spool (vt_tray, or vir_slot[] on dual-nozzle printers). */
+  else if ((!p1[0] && (!strcmp(p2, "tray") || !strcmp(p2, "vir_slot"))) || !strcmp(p1, "vt_tray")) {
+    if (!strcmp(k, "id")) scan.slotId = atoi(v);
+    else if (!strcmp(k, "tray_color")) scan.slotHasColour = trayColour(v, scan.slotColour);
+    else if (!strcmp(k, "tray_type")) strlcpy(scan.slotType, v, sizeof scan.slotType);
+  }
+  /* An AMS unit: an element of ams.ams[]. */
+  else if (!p1[0] && !strcmp(p2, "ams") && !strcmp(k, "id")) scan.unitId = atoi(v);
+  /* A nozzle: an element of device.extruder.info[]. */
+  else if (!p1[0] && !strcmp(p2, "info") && !strcmp(p3, "extruder")) {
+    if (!strcmp(k, "id")) scan.extId = atoi(v);
+    else if (!strcmp(k, "snow")) scan.extSnow = atoi(v);
+  }
+  scan.key[0] = 0;
+}
+
+static void scanTrayDone(bool external) {
+  if (scan.slotId >= 0) {
+    if (external) filRemember(scan.slotId, scan.slotColour, scan.slotHasColour, scan.slotType);
+    else if (scan.unitCount < 4) {
+      const int i = scan.unitCount++;
+      scan.unitSlot[i] = scan.slotId; scan.unitColour[i] = scan.slotColour; scan.unitHas[i] = scan.slotHasColour;
+      strlcpy(scan.unitType[i], scan.slotType, sizeof scan.unitType[i]);
+    }
+  }
+  scan.slotId = -1; scan.slotHasColour = false; scan.slotType[0] = 0;
+}
+
+/* A container closes: whatever it held is complete. */
+static void scanClose() {
+  if (!scan.depth) return;
+  const bool element = !scan.path[scan.depth - 1][0];
+  const char *closing = scan.path[scan.depth - 1];
+  scan.depth--;
+  const char *p1 = scanUp(1), *p2 = scanUp(2);
+  if (element && !strcmp(p1, "tray")) scanTrayDone(false);
+  else if ((element && !strcmp(p1, "vir_slot")) || !strcmp(closing, "vt_tray")) scanTrayDone(true);
+  else if (element && !strcmp(p1, "ams")) {
+    /* The unit's id may come before or after its trays, so they are placed only once the unit is complete. */
+    if (scan.unitId >= 0)
+      for (int i = 0; i < scan.unitCount; i++)
+        filRemember(scan.unitId >= 128 ? scan.unitId : scan.unitId * 4 + scan.unitSlot[i], scan.unitColour[i], scan.unitHas[i], scan.unitType[i]);
+    scan.unitId = -1; scan.unitCount = 0;
+  } else if (element && !strcmp(p1, "info") && !strcmp(p2, "extruder")) {
+    if (scan.extId == 0 || scan.extId == 1) { prSnow[scan.extId] = scan.extSnow; prSnowSeen = true; }
+    scan.extId = scan.extSnow = -1;
+  }
+}
+
+static void scanOpen(const char *key) {
+  if (scan.depth < 8) strlcpy(scan.path[scan.depth], key, sizeof scan.path[0]);
+  else scan.path[7][0] = '\x02';        // too deep to matter: nothing the bar reads lives there
+  if (scan.depth < 8) scan.depth++;
 }
 
 static void scanFeed(char c) {
@@ -422,7 +534,11 @@ static void scanFeed(char c) {
       if (scan.valueLength < sizeof scan.value - 1) scan.value[scan.valueLength++] = c;
       return;
     }
-    if (c == ',' || c == '}' || c == ']' || c == ' ' || c == '\n' || c == '\r') { scanFinish(); return; }
+    if (c == ',' || c == '}' || c == ']' || c == ' ' || c == '\n' || c == '\r') {
+      scanFinish();
+      if (c == '}' || c == ']') scanClose();
+      return;
+    }
     if (scan.valueLength < sizeof scan.value - 1) scan.value[scan.valueLength++] = c;
     return;
   }
@@ -442,18 +558,16 @@ static void scanFeed(char c) {
   }
   if (c == ':') {
     /* A string followed by a colon was a key. */
-    if (scan.hadString && !scan.tooLong) {
-      scan.key = -1;
-      for (int i = 0; i < 3; i++) if (strcmp(scan.text, SCAN_KEYS[i]) == 0) scan.key = i;
-      scan.awaiting = scan.key >= 0;
-    }
+    if (scan.hadString && !scan.tooLong) { strlcpy(scan.key, scan.text, sizeof scan.key); scan.awaiting = true; }
     scan.hadString = false;
     return;
   }
   scan.hadString = false;
+  if (c == '{' || c == '[') { scanOpen(scan.awaiting ? scan.key : ""); scan.awaiting = false; scan.key[0] = 0; return; }
+  if (c == '}' || c == ']') { scanClose(); return; }
+  if (c == ',') return;
   if (scan.awaiting) {
     scan.awaiting = false;
-    if (c == '{' || c == '[') { scan.key = -1; return; }
     scan.capturing = true; scan.valueIsString = false; scan.valueLength = 0;
     scan.value[scan.valueLength++] = c;
   }
@@ -464,8 +578,34 @@ static void scanCommit() {
   if (scan.gotGcode) strlcpy(prGcode, scan.gcode, sizeof prGcode);
   if (scan.gotPercent) prPercent = scan.percent;
   if (scan.gotBed) prBed = scan.bed;
+  if (scan.gotTrayNow) prTrayNow = scan.trayNow;
+  if (scan.gotExtState) prActiveExt = (scan.extState >> 8) & 1;
   prLastMsgAt = millis();
 }
+
+/**
+ * The filament in use, as a global tray id, or -1 for none. On a
+ * dual-nozzle printer the active nozzle's own slot decides; otherwise
+ * tray_now, where 255 means nothing loaded.
+ */
+static int filLoadedTray() {
+  if (prSnowSeen) {
+    const int s = prSnow[prActiveExt];
+    if (s < 0 || s == 0xFFFF) return -1;
+    const int ams = (s >> 8) & 255, slot = s & 255;
+    if (ams == 255) return slot == 0 ? 254 : 255;
+    return ams >= 128 ? ams : ams * 4 + slot;
+  }
+  return prTrayNow < 0 || prTrayNow == 255 ? -1 : prTrayNow;
+}
+
+static const FilamentTray *filFind(int tray) {
+  for (int i = 0; i < filTrayCount; i++) if (filTrays[i].tray == tray) return &filTrays[i];
+  return nullptr;
+}
+
+/* The last filament seen loaded, kept so the bar can still say it between prints (a dual-nozzle printer unloads after each one). */
+static FilamentTray filLast = {-1, 0, ""};
 
 static bool netRead(WiFiClientSecure &net, uint8_t *into, size_t count, uint32_t timeoutMs) {
   size_t got = 0;
@@ -574,6 +714,7 @@ static void printerTask(void *) {
     xSemaphoreGive(prLock);
     prRestart = false;
     if (prPaused) { prConnected = false; prSetError("Paused while a firmware update downloads"); prWait(1000); continue; }
+    if (prHold) { prConnected = false; prSetError("Let go for a moment while an add-on downloads"); prWait(250); continue; }
     if (!ip.length() || (kind == PR_BAMBU && !serial.length())) { prConnected = false; prSetError(""); prWait(2000); continue; }
     if (WiFi.status() != WL_CONNECTED) { prConnected = false; prSetError("Waiting for Wi-Fi"); prWait(2000); continue; }
     /* Klipper's link stays "connected" between polls, so it is not reset at the top of each pass. */
@@ -1564,6 +1705,12 @@ static void handleStatus() {
   doc["version"] = FW_VERSION;
   doc["build"] = BUILD_ID;
   doc["uptime"] = millis() / 1000;
+  /* Why the bar last started: a crash or a watchdog says something is wrong, a restart or power-on does not. */
+  {
+    const esp_reset_reason_t why = esp_reset_reason();
+    doc["resetReason"] = why == ESP_RST_POWERON ? "power on" : why == ESP_RST_SW ? "restart" : why == ESP_RST_PANIC ? "crash"
+      : (why == ESP_RST_INT_WDT || why == ESP_RST_TASK_WDT || why == ESP_RST_WDT) ? "watchdog" : why == ESP_RST_BROWNOUT ? "brownout" : "other";
+  }
   doc["heap"] = ESP.getFreeHeap();
   /* The largest single piece: a TLS session needs one big block, so this, not the total, says whether HTTPS will start. */
   doc["heapBlock"] = ESP.getMaxAllocHeap();
@@ -1653,6 +1800,26 @@ static void handleStatus() {
     if (prPercent >= 0) printer["percent"] = (int)prPercent;
     if (!isnan(prBed)) printer["bed"] = (float)prBed;
     printer["state"] = ST_NAMES[printerState(own)];
+  }
+  /* The filament: what is loaded now, or (loaded false) the last one seen loaded. Null if the printer has never said. */
+  {
+    const int tray = printerFresh() ? filLoadedTray() : -1;
+    const FilamentTray *now = tray >= 0 ? filFind(tray) : nullptr;
+    const FilamentTray *show = now ? now : filLast.tray != -1 ? &filLast : nullptr;
+    if (show) {
+      JsonObject fil = printer["filament"].to<JsonObject>();
+      fil["colour"] = colourText(show->colour);
+      fil["type"] = show->type;
+      fil["loaded"] = now != nullptr;
+    } else printer["filament"] = nullptr;
+    /* Every tray the printer has described, by Bambu Studio's global tray number. */
+    JsonArray trays = printer["trays"].to<JsonArray>();
+    for (int i = 0; i < filTrayCount; i++) {
+      JsonObject one = trays.add<JsonObject>();
+      one["tray"] = filTrays[i].tray;
+      one["colour"] = colourText(filTrays[i].colour);
+      one["type"] = filTrays[i].type;
+    }
   }
 
   const esp_partition_t *running = esp_ota_get_running_partition();
@@ -1845,7 +2012,7 @@ static const char API_DOC[] PROGMEM = R"JSON({"about":"Panda State, open firmwar
 {"call":"POST /api/wifi","body":{"ssid":"...","password":"..."},"does":"Save Wi-Fi and restart"},
 {"call":"GET /api/wifi/scan","does":"Networks in range. The first call starts a scan and answers {scanning:true}; ask again for {networks:[{ssid,rssi,open}]}. ?again starts a fresh one"},
 {"call":"POST /api/ap","body":{"always":"true|false","ssid":"1-32","password":"8-63, or empty for the default"},"does":"The bar's own hotspot: by default it comes up after a minute without Wi-Fi; always keeps it on. At 192.168.4.1"},
-{"call":"POST /api/addonfile","body":{"url":"https://... an add-on file to fetch at every start","file":"or the add-on file itself, up to 4000 characters","remove":true},"does":"An add-on the bar runs itself: look, meters or frame as above, or frames {fps, list} for an animation, or source {url, path, min, max, colour, every} for a live meter read from a web address. It is shown as soon as it loads. Its state is in /api/status under addonFile"},
+{"call":"POST /api/addonfile","body":{"url":"https://... an add-on file to fetch at every start","file":"or the add-on file itself, up to 4000 characters","remove":true},"does":"An add-on the bar runs itself: look, meters or frame as above, or frames {fps, list} for an animation, or source {url, path, min, max, colour, every} for a live meter read from a web address, or filament {effect, speed} for the colour of the filament the printer is using. It is shown as soon as it loads. Its state is in /api/status under addonFile"},
 {"call":"POST /api/update","body":{"check":true,"install":true,"auto":"true|false"},"does":"Look for a newer release on GitHub, or install it (checked against the release's SHA256SUMS, into the other slot, on trial). auto: look once a day and say so on the page; it never installs by itself. Progress is in /api/status under update"},
 {"call":"POST /update","body":"multipart file","does":"Install a firmware .bin into the other slot and restart into it"},
 {"call":"POST /api/slot | /api/reboot | /api/factory","does":"Start the other slot's firmware | restart | clear this firmware's settings"}
@@ -2039,6 +2206,7 @@ struct Fetch {
   WiFiClient plain;
   HTTPClient http;
   String host;                 // the server of the last hop, for the error message
+  bool held = false;           // the printer link was let go for this download; picked up again when it is done
   int begin(String url, uint32_t timeoutMs = 15000) {
     static const char *keep[] = {"Location"};
     for (int hop = 0; hop < 5; hop++) {
@@ -2055,7 +2223,27 @@ struct Fetch {
       if (!(secure ? http.begin(tls, url) : http.begin(plain, url))) return -100;
       http.addHeader("Accept", "application/json, */*");
       http.collectHeaders(keep, 1);
-      const int code = http.GET();
+      int code = http.GET();
+      /* Two secure sessions at once (the printer's and this one) leave too
+         little memory in one piece for checking a 4096-bit root certificate,
+         and that fails as "certificate verification failed": measured on the
+         P2 with 38 KB as the largest free block, where 80-90 KB had always
+         worked. So a secure download that cannot connect while the Bambu
+         link is up lets the link go for those few seconds and tries again. */
+      if (code < 0 && secure && !held && prKind == PR_BAMBU && prConnected) {
+        held = true;
+        prHold = true;
+        prRestart = true;
+        for (int i = 0; i < 40 && prConnected; i++) delay(100);
+        delay(300);
+        http.end();
+        tls.stop();
+        tls.setCACert(ROOT_CAS);
+        if (!http.begin(tls, url)) return -100;
+        http.addHeader("Accept", "application/json, */*");
+        http.collectHeaders(keep, 1);
+        code = http.GET();
+      }
       if (code != 301 && code != 302 && code != 303 && code != 307 && code != 308) return code;
       const String next = http.header("Location");
       if (!next.length()) return code;
@@ -2073,7 +2261,7 @@ struct Fetch {
     if (tlsCode) why += " (secure connection: " + String(tlsWhy) + ")";
     return why;
   }
-  ~Fetch() { http.end(); }
+  ~Fetch() { http.end(); tls.stop(); if (held) prHold = false; }
 };
 
 /* "v0.6.1" against "0.6.0": numbers compared part by part. */
@@ -2221,8 +2409,9 @@ static bool updInstall() {
  *                 "colour": "#RRGGBB", "every": 30-86400 }   a live meter
  *   }
  */
-enum FileKind : uint8_t { FA_NONE, FA_STATIC, FA_FRAMES, FA_SOURCE };
-static const char *FA_NAMES[] = {"none", "static", "frames", "source"};
+enum FileKind : uint8_t { FA_NONE, FA_STATIC, FA_FRAMES, FA_SOURCE, FA_FILAMENT };
+static const char *FA_NAMES[] = {"none", "static", "frames", "source", "filament"};
+static uint8_t faFilEffect = FX_SOLID, faFilSpeed = 40;
 static const int FA_MAX_FRAMES = 30;
 static const size_t FA_MAX_UPLOAD = 4000;         // what fits comfortably in the settings store
 static const size_t FA_MAX_FETCH = 12000;
@@ -2271,6 +2460,13 @@ static const char *faLoad(const String &text) {
     faFps = constrain(doc["frames"]["fps"] | 4, 1, 20);
     faFrameAt = 0;
     faKind = FA_FRAMES;
+  } else if (!doc["filament"].isNull()) {
+    /* The filament the printer is using, as a colour: {"filament":{"effect":"solid","speed":40}}. */
+    const int fx = findName(FX_NAMES, FX_COUNT, doc["filament"]["effect"] | "solid");
+    if (fx < 0) return "filament.effect is not one of the effects";
+    faFilEffect = fx;
+    faFilSpeed = constrain(doc["filament"]["speed"] | 40, 1, 100);
+    faKind = FA_FILAMENT;
   } else if (!doc["source"].isNull()) {
     JsonVariantConst src = doc["source"];
     faSrcUrl = src["url"] | "";
@@ -2433,6 +2629,32 @@ static void faTick() {
     xSemaphoreGive(addonLock);
     faFrameAt = (faFrameAt + 1) % faFrameCount;
     faPushedAt = now;
+  } else if (faKind == FA_FILAMENT && now - faPushedAt >= 1000) {
+    faPushedAt = now;
+    const int tray = printerFresh() ? filLoadedTray() : -1;
+    const FilamentTray *loaded = tray >= 0 ? filFind(tray) : nullptr;
+    const FilamentTray *show = loaded ? loaded : filLast.tray != -1 ? &filLast : nullptr;
+    if (!show) { faError = "Waiting for the printer to say which filament it has (Bambu printers with an AMS or external spool)"; return; }
+    faError = "";
+    /* An LED cannot shine black: a black or near-black filament is shown as a dim grey rather than as nothing. */
+    uint32_t colour = show->colour;
+    const uint8_t r = colour >> 16, g = colour >> 8, b = colour;
+    if (max(r, max(g, b)) < 40) colour = 0x303030;
+    xSemaphoreTake(addonLock, portMAX_DELAY);
+    if (Addon *slot = addonSlotFor(faId)) {
+      Addon next = {};
+      next.used = true;
+      strlcpy(next.id, faId, sizeof next.id);
+      strlcpy(next.name, faName, sizeof next.name);
+      next.at = now;
+      next.ttlMs = 10000;
+      next.kind = ADDON_LOOK;
+      /* What is loaded now in the add-on's own effect; between prints, the last one used, breathing slowly. */
+      next.look = loaded ? Look(colour, faFilEffect, faFilSpeed) : Look(colour, FX_BREATHE, 15);
+      next.fill = 100;
+      *slot = next;
+    }
+    xSemaphoreGive(addonLock);
   } else if (faKind == FA_SOURCE) {
     if ((!faFetchedAt || now - faFetchedAt >= faEveryMs) && now - faTriedAt > 30000 && WiFi.status() == WL_CONNECTED && timeKnown()) {
       faTriedAt = now;
@@ -2541,8 +2763,8 @@ static void handleAddonFile() {
     JsonDocument probe;
     deserializeJson(probe, text);
     if (const char *bad = addonIdError(probe["id"].as<const char *>())) return sendResult(false, bad);
-    if (probe["look"].isNull() && probe["meters"].isNull() && probe["frame"].isNull() && probe["frames"].isNull() && probe["source"].isNull())
-      return sendResult(false, "Give one of look, meters, frame, frames or source");
+    if (probe["look"].isNull() && probe["meters"].isNull() && probe["frame"].isNull() && probe["frames"].isNull() && probe["source"].isNull() && probe["filament"].isNull())
+      return sendResult(false, "Give one of look, meters, frame, frames, source or filament");
     /* Kept as bytes, not a string: a string must fit in one page of the
        settings store, and a 1.8 KB animation did not (measured, 0.5.9). */
     if (prefs.putBytes("fajson", text.c_str(), text.length()) != text.length()) {
@@ -2893,6 +3115,7 @@ void setup() {
   prLock = xSemaphoreCreateMutex();
   addonLock = xSemaphoreCreateMutex();
   updAuto = prefs.getBool("updauto", true);
+  if (prefs.isKey("filcol")) { filLast.tray = -2; filLast.colour = prefs.getUInt("filcol", 0); strlcpy(filLast.type, prefs.getString("filtype", "").c_str(), sizeof filLast.type); }
   if (prefs.getBool("pset", false)) {
     prIp = prefs.getString("pip", "");
     prSerial = prefs.getString("psn", "");
@@ -2965,6 +3188,16 @@ void loop() {
     lastWatchAt = millis();
     watchTrial();
     trackPrinter();
+    /* The filament in use, remembered (and kept across restarts) so it can still be shown once the printer has unloaded it. */
+    if (printerFresh()) {
+      const int tray = filLoadedTray();
+      const FilamentTray *found = tray >= 0 ? filFind(tray) : nullptr;
+      if (found && (found->colour != filLast.colour || strcmp(found->type, filLast.type))) {
+        filLast = *found;
+        prefs.putUInt("filcol", filLast.colour);
+        prefs.putString("filtype", filLast.type);
+      } else if (found) filLast.tray = found->tray;
+    }
     /* Ten seconds of the microphone running without taking the chip down is proof enough to stop guarding it. */
     if (audioRunning && !audioConfirmed && millis() > 15000) { prefs.remove("audiotry"); audioConfirmed = true; }
   }

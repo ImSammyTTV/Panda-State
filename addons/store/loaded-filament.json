@@ -1,0 +1,10 @@
+{
+    "id":  "filament",
+    "name":  "Loaded filament",
+    "description":  "The bar takes the colour of the filament the printer is using, read from its AMS or external spool. Between prints it shows the last one used, breathing slowly. Black filament shows as a dim grey, since an LED cannot shine black. Bambu printers only.",
+    "author":  "Sam",
+    "filament":  {
+                     "effect":  "solid",
+                     "speed":  40
+                 }
+}

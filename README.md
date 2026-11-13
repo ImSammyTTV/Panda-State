@@ -37,7 +37,7 @@ API.
 - 🏠 **Home Assistant** over MQTT: the bar appears by itself as a light with sensors, ready for automations.
 - 🌡️ **A real cool-down** after a print: the bar drains as the bed cools, then says *Ready*.
 - 🎨 **Every state restyled**: eight states, each with two colours, one of 17 effects and a speed.
-- 🧩 **Add-ons and a store**: weather, rain, UV and air quality for your town, prices, looks, animations.
+- 🧩 **Add-ons and a store**: the loaded filament's colour, weather, rain, UV and air quality for your town, prices, looks, animations.
 - ⬆️ **Updates from GitHub**, checked against the release's checksums, installed with one click.
 - 📶 **Its own hotspot** when Wi-Fi fails, so you can always reach it.
 - 🎵 **Music mode**, a **schedule**, and an **open HTTP API** for your own apps.
@@ -138,7 +138,9 @@ Wi-Fi with its hotspot fallback, and updates straight from GitHub:
   medium, high or auto sensitivity.
 - **Schedule.** Dark or dimmed by the clock; the time comes from the internet.
 - **Add-ons, with a store.** Show something else when the printer has nothing
-  to say: a look, meters, an animation, or a live meter from a web address.
+  to say: a look, meters, an animation, a live meter from a web address, or
+  the colour of the filament the printer is using (read from its AMS, on a
+  dual-nozzle X2D or H2D from whichever nozzle is in use).
   Pick from the [store](addons/store), upload a file of your own, or have any
   program on your network post to the bar.
 - **Updates from GitHub.** The bar finds the newest release here, checks it
@@ -291,7 +293,7 @@ use it). `GET /api` returns this list.
 
 | Call | Body | What it does |
 |---|---|---|
-| `GET /api/status` | | Everything: what is showing and why, printer link, microphone, clock, add-ons, settings, the 25 LEDs |
+| `GET /api/status` | | Everything: what is showing and why, printer link (with the loaded filament and every AMS tray), microphone, clock, add-ons, settings, the 25 LEDs |
 | `GET /api/frame` | | Just the 25 LED colours, as 150 hex digits |
 | `POST /api/state` | `{"state":"printing","progress":42}` | A controller saying what the printer is doing; repeat at least every 45 s |
 | `POST /api/addon` | see below | A program saying what it wants shown |
