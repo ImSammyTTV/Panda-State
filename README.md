@@ -12,276 +12,285 @@
 
 # Custom firmware for the BIQU Panda Status P2
 
+An open replacement firmware for the **BIQU Panda Status P2**, the 25-LED
+light bar for Bambu Lab **P2S** and **X2D** printers. It does what stock does,
+then adds a real cool-down, seventeen effects, add-ons, updates from GitHub
+and an open API.
+
 <p align="center"><sub>Free and open. If it makes your printer nicer to live with, a drink on <a href="https://ko-fi.com/imsammyttv">Ko-fi</a> helps fund the next feature.</sub></p>
 
-An open, replacement firmware for the **BIQU (BigTreeTech) Panda Status P2**,
-the 25-LED status light bar for Bambu Lab P2S and X2D printers. It keeps what
-the stock firmware does, adds a proper cool-down state, seventeen lighting
-effects, a schedule, Music mode, a clean web page, and an open HTTP API so
-anything on your network can use the bar.
+> [!WARNING]
+> **Unofficial**, and not made or supported by BIQU, BigTreeTech or Bambu Lab.
+> For the **Panda Status P2 only**: not tested on the original Panda Status or
+> anything else. **Use at your own risk** (see the [disclaimer](#disclaimer)).
 
-<p align="center"><img src="docs/web-page-status-and-looks.png" alt="The firmware's web page: what the bar is showing, its 25 LEDs live, brightness, mode, and each state's look" width="560"></p>
+<p align="center"><img src="docs/live-leds.gif" alt="The bar's own web page, its live picture of the 25 LEDs running the rainbow effect" width="640"></p>
 
-> **Read this first.**
-> - This is **unofficial**. It is not made, endorsed or supported by BIQU,
->   BigTreeTech or Bambu Lab.
-> - It is written for the **Panda Status P2** only. It has **not been tested
->   on the original Panda Status** (the earlier model) or any other device, and
->   is not expected to work there. Do not install it on anything else.
-> - **You use it entirely at your own risk.** See [Disclaimer](#disclaimer).
+## Highlights
+
+- 🔗 **Pairs with the printer by itself**, and keeps stock's Wi-Fi and pairing: nothing to retype.
+- 🌡️ **A real cool-down** after a print: the bar drains as the bed cools, then says *Ready*.
+- 🎨 **Every state restyled**: eight states, each with two colours, one of 17 effects and a speed.
+- 🧩 **Add-ons and a store**: weather, rain, UV and air quality for your town, prices, looks, animations.
+- ⬆️ **Updates from GitHub**, checked against the release's checksums, installed with one click.
+- 📶 **Its own hotspot** when Wi-Fi fails, so you can always reach it.
+- 🎵 **Music mode**, a **schedule**, and an **open HTTP API** for your own apps.
+
+## Quick start
+
+1. Find the bar's address (the stock app or your router shows it).
+2. Download `panda-p2-custom-<version>.bin` from the [latest release](https://github.com/ImSammyTTV/panda-status-p2-firmware/releases/latest).
+3. Open `http://<bar address>/`, find the firmware update section, and upload the file.
+
+The bar restarts into it in a few seconds, on the same Wi-Fi and still paired.
+From then on it updates itself: **Firmware → Check for updates → Install**.
 
 ---
 
-## What it does
+<details>
+<summary><b>📸 A tour of the bar's page</b></summary>
+<br>
 
-- **Pairs with the printer by itself.** Printer address, serial number and
-  access code on the bar's page. A bar that was already paired on the stock
-  firmware keeps its pairing **and** its Wi-Fi: nothing to type after the
-  update.
-- **A real cool-down after a print.** Stock shows a finished print in its own
-  green no matter what. Here the bar drains as the bed cools and only then says
-  *Ready*, with the time and bed temperature you choose.
-- **Every state restyled.** Idle, printing, paused, finished, cooling, ready,
-  error and offline each get their own two colours, effect and speed. Stock
-  offers three colours.
-- **Seventeen effects:** solid, breathe, fill, flash, chase, rainbow, gradient,
-  waves, scroll, theatre, scanner, meteor, fire, twinkle, sparkle, rain and
-  aurora. Two-colour effects work out a second colour from the first unless you
-  pick one. A *Try* button shows any look on the bar for a few seconds.
-- **Music mode.** A sound-level meter from the bar's built-in microphone, blue
-  through green, yellow and orange to red, with low / medium / high / auto
-  sensitivity.
-- **Schedule.** Dark (or dimmed) by the clock, e.g. 9 pm to 9 am. Time comes
-  from the internet; the time zone is picked on the page.
-- **Add-ons, with a store.** Show something else on the bar when the printer
-  has nothing to say: a look, meters, an animation, or a live meter read from a
-  web address (a price, a usage figure). Pick one from the
-  [store](addons/store) on the bar's page, upload a file of your own, or have
-  any program on your network post to the bar. A store add-on is fetched from
-  GitHub when the bar starts; only its address is kept on the bar.
-- **Updates from GitHub.** *Check for updates* on the bar's page finds the
-  newest release here, and *Install* downloads it, checks it against the
-  release's SHA256 checksums and installs it, with the same trial-and-rollback
-  safety as any update. An optional daily check tells you when there is one; it
-  never installs by itself.
-- **Its own hotspot when Wi-Fi fails.** After a minute without Wi-Fi the bar
-  starts its own network so you can reach it and fix the settings, and it
-  goes away again once Wi-Fi is back. It can be kept on all the time, and its
-  name and password changed. The Wi-Fi card can scan for networks.
-- **A controller can drive it.** Something that knows more than the bar (a
-  home-automation system, a script) can post the printer's state; the bar
-  believes it while it keeps posting, then falls back to its own printer link.
-- **Its own web page** at `http://<bar address>/` with a live picture of the 25
-  LEDs. It works on a phone and needs no internet.
-- **Recoverable by design.** See [Staying safe](#staying-safe).
-
-The button on the bar: press once for the next Music sensitivity, twice to
-switch between Music and following the printer, hold for five seconds to start
-the setup Wi-Fi network.
-
-### The bar's page
+<p align="center"><img src="docs/page-tour.gif" alt="A tour of the page: every section folded, then the add-ons and store, then Wi-Fi and firmware" width="560"></p>
 
 Every section folds away, and a closed one still says how things are:
 
-<p align="center"><img src="docs/web-page-overview.png" alt="The page with every section folded: status, state looks, add-ons, schedule, printer, Wi-Fi and firmware, each with a one-line summary" width="560"></p>
+<p align="center"><img src="docs/web-page-overview.png" alt="Every section folded, each with a one-line summary" width="560"></p>
 
-The add-ons, with the store read from this repository (weather, air quality and prices for your own town, looks and an animation):
+The add-ons, with the store read from this repository:
 
-<p align="center"><img src="docs/web-page-addons-store.png" alt="The Add-ons section: the add-on on the bar now, and the store's cards with colour previews" width="560"></p>
+<p align="center"><img src="docs/web-page-addons-store.png" alt="The add-on on the bar now, and the store's cards with colour previews" width="560"></p>
 
 Wi-Fi with its hotspot fallback, and updates straight from GitHub:
 
 <p align="center"><img src="docs/web-page-wifi-firmware.png" alt="The Wi-Fi section with the hotspot settings, and the Firmware section showing it is up to date" width="560"></p>
 
-*(Screenshots from a running bar; network names, addresses and passwords replaced with examples.)*
+*Network names, addresses and passwords replaced with examples.*
 
-## The hardware, and why this is possible
+</details>
+
+<details>
+<summary><b>✨ Everything it does</b></summary>
+<br>
+
+- **Pairs with the printer by itself.** Printer address, serial number and
+  access code on the bar's page. A bar already paired on stock keeps its
+  pairing **and** its Wi-Fi.
+- **A real cool-down after a print.** Stock shows a finished print in its own
+  green whatever you choose. Here the bar drains as the bed cools and only then
+  says *Ready*, with the time and bed temperature you set.
+- **Every state restyled.** Idle, printing, paused, finished, cooling, ready,
+  error and offline each get two colours, an effect and a speed (stock offers
+  three colours).
+- **Seventeen effects:** solid, breathe, fill, flash, chase, rainbow, gradient,
+  waves, scroll, theatre, scanner, meteor, fire, twinkle, sparkle, rain and
+  aurora. *Try* shows any look on the bar for a few seconds.
+- **Music mode.** A sound-level meter from the built-in microphone, with low,
+  medium, high or auto sensitivity.
+- **Schedule.** Dark or dimmed by the clock; the time comes from the internet.
+- **Add-ons, with a store.** Show something else when the printer has nothing
+  to say: a look, meters, an animation, or a live meter from a web address.
+  Pick from the [store](addons/store), upload a file of your own, or have any
+  program on your network post to the bar.
+- **Updates from GitHub.** The bar finds the newest release here, checks it
+  against the release's SHA256 checksums, and installs it on trial. The bar
+  itself fills in blue as it goes. An optional daily check only tells you; it
+  never installs by itself.
+- **Its own hotspot.** After a minute without Wi-Fi the bar starts its own
+  network so you can fix its settings; it goes again once Wi-Fi is back. It can
+  also stay on, with your own name and password, and the page can scan for
+  networks.
+- **A controller can drive it.** A home-automation system or script can post
+  the printer's state; the bar follows it while it keeps posting.
+- **Its own web page**, with a live picture of the 25 LEDs. Works on a phone,
+  needs no internet.
+
+**The button on the bar:** press once for the next Music sensitivity, twice to
+switch between Music and following the printer, hold five seconds to start the
+hotspot.
+
+</details>
+
+<details>
+<summary><b>🔧 The hardware, and why this is possible</b></summary>
+<br>
 
 BIQU publish no source code or schematics for the P2. Their
 [product page](https://neo.bttwiki.com/en/docs/panda-series/module/panda-status-p2/)
-gives the module, board size and power; everything else below was read out of
-the stock firmware itself and then confirmed on a working bar.
-[HARDWARE.md](HARDWARE.md) has every detail and how each was established.
+gives the module, board size and power; the rest was read out of the stock
+firmware and confirmed on a working bar. [HARDWARE.md](HARDWARE.md) has every
+detail and how it was found.
 
 | | |
 |---|---|
-| Processor | Espressif **ESP32-C3** (an ESP32-C3-MINI module): 32-bit RISC-V, single core, 160 MHz, 400 KB SRAM, 2.4 GHz Wi-Fi |
-| Board | 96 × 17 mm control board built into the light strip, which sticks to the printer's heated bed |
-| Power | USB-C, 5 V (BIQU rate it at 5 V 3 A); 3.3 V logic |
-| Flash | 4 MB, split into two 1.94 MB firmware slots (`app0`, `app1`) plus settings |
-| LEDs | 25 addressable WS2812-style LEDs, GRB colour order, data on GPIO 5 |
-| Microphone | ES8311 audio codec: I2C on GPIO 2/3 (address 0x18), I2S on GPIO 0/1/4/7/10 |
-| Button | One push button on GPIO 9 |
-| USB-C | CH340 USB-serial bridge (for flashing and logs, 115200 baud) |
-| Speaker | None found: a test tone at every volume made no sound |
+| Processor | Espressif **ESP32-C3** (ESP32-C3-MINI): RISC-V, 160 MHz, 400 KB SRAM, 2.4 GHz Wi-Fi |
+| Board | 96 × 17 mm, built into the light strip, which sticks to the heated bed |
+| Power | USB-C, 5 V (rated 5 V 3 A); 3.3 V logic |
+| Flash | 4 MB: two 1.94 MB firmware slots plus settings |
+| LEDs | 25 addressable WS2812-style LEDs, GRB, data on GPIO 5 |
+| Microphone | ES8311 codec: I2C on GPIO 2/3 (0x18), I2S on GPIO 0/1/4/7/10 |
+| Button | GPIO 9 |
+| USB-C | CH340 USB-serial bridge (flashing and logs, 115200 baud) |
+| Speaker | None found |
 | Stock firmware | V1.0.0, ESP-IDF v5.3.1 + ESP-ADF |
 
 It works because:
 
-1. **Nothing is locked.** The ESP32-C3 has no secure boot, no flash encryption
-   and no firmware signing switched on. The bar will run any valid ESP32-C3
-   image.
-2. **Stock's own updater accepts it.** The stock web page's firmware update
-   (`POST /ota`) writes a new image into the slot that is *not* running and
-   boots it. The custom firmware goes on over Wi-Fi, no cable, and the stock
-   firmware stays intact in the other slot.
-3. **Every pin could be found.** The stock firmware's own set-up code says which
-   pins drive the LEDs, the microphone and the button, so this firmware drives
-   the same hardware the same way.
-4. **The printer talks openly on the LAN.** Bambu printers publish their state
-   over MQTT (TLS, port 8883, user `bblp`, password = the access code). A P2S or
-   X2D sends a message of about 31 KB every second, far more than this chip can
-   buffer next to a TLS session, so the firmware reads it as a stream and picks
-   out just the job state, progress and bed temperature as they go past.
+1. **Nothing is locked.** No secure boot, no flash encryption, no firmware
+   signing: the bar runs any valid ESP32-C3 image.
+2. **Stock's own updater accepts it.** It writes a new image into the slot that
+   is not running, so the custom firmware goes on over Wi-Fi and stock stays
+   whole in the other slot.
+3. **Every pin could be found** in stock's own set-up code.
+4. **The printer talks openly on the LAN**, over MQTT with TLS (port 8883,
+   user `bblp`, password = the access code). Its ~31 KB message each second is
+   too big for this chip to hold beside a TLS session, so the firmware reads it
+   as a stream and keeps only the job state, progress and bed temperature.
 
-## Installing
+</details>
 
-You need: a Panda Status P2 on your Wi-Fi, its IP address (the stock app or
-your router shows it), and `releases/panda-p2-custom-0.6.6.bin`.
+<details>
+<summary><b>📥 Installing and updating, in detail</b></summary>
+<br>
 
-**From the stock firmware's page:** open `http://<bar address>/`, find the
-firmware update section, choose `panda-p2-custom-0.6.6.bin` and upload it.
-
-**Or from a terminal:**
+**First install, from the stock firmware.** Open `http://<bar address>/`, find
+the firmware update section, and upload `panda-p2-custom-<version>.bin`. Or
+from a terminal:
 
 ```sh
 curl -X POST http://<bar address>/ota \
      -H "OTA-Type: ota_fw" \
      -H "Content-Type: application/octet-stream" \
-     --data-binary @releases/panda-p2-custom-0.6.6.bin
+     --data-binary @panda-p2-custom-<version>.bin
 ```
 
-The bar restarts into the new firmware within a few seconds, joins the same
-Wi-Fi and keeps its printer pairing. Open `http://<bar address>/` again: the
-page now says *v0.6.6*.
+Check the file against the release's `SHA256SUMS.txt` first. The bar restarts
+into it within a few seconds, joins the same Wi-Fi and keeps its pairing.
 
-Check the download against `releases/SHA256SUMS.txt` first.
+**Updating.** From 0.6.2 the bar updates itself: **Firmware → Check for
+updates → Install**. It refuses anything that does not match the release's
+checksums, and restarts into it on trial. *Install file* still takes a `.bin`
+you downloaded yourself. (0.6.0 and 0.6.1 could not download: install 0.6.2 or
+later by hand once.)
 
-### Updating later
+**Keeping stock.** Any update goes into the *other* slot, which replaces what is
+there, stock included. To keep stock in it, update through stock instead: press
+*Start the firmware in the other slot*, then upload the new image through stock
+as above.
 
-From 0.6.0 the bar updates itself: open its page, **Firmware → Check for
-updates**, then **Install**. It downloads the newest release from this
-repository, refuses it unless it matches the release's `SHA256SUMS.txt`, and
-restarts into it on trial. (*Install file* still takes a `.bin` you have
-downloaded yourself.)
+</details>
 
-Either way the new firmware goes into the other slot, which **replaces whatever
-is kept there, the stock firmware included**. To keep stock in the other slot,
-update through stock instead: press *Start the firmware in the other slot* (the
-bar restarts into stock), then upload the new image through stock as above.
-
-## Staying safe
+<details>
+<summary><b>🛟 Staying safe</b></summary>
+<br>
 
 - **Two slots.** An update always goes into the slot that is not running.
-- **Trial period.** A new build is "on trial" until it has been on Wi-Fi for
-  20 seconds. If it is not on Wi-Fi within 2 minutes of starting, it hands the
+- **Trial period.** A new build that is not on Wi-Fi within 2 minutes hands the
   bar back to the other slot by itself.
 - **Microphone guard.** If starting the microphone ever brings the chip down,
-  the next start leaves it off, so the bar stays reachable for an update.
-- **Hotspot.** With no Wi-Fi for a minute (or after a 5 s button hold) the bar
-  starts its own network, `PandaP2-Setup` unless you renamed it, password
-  `panda` followed by the last six hex digits of its MAC address unless you
-  changed it (the page shows the default). Join it and open
-  `http://192.168.4.1/`. It cannot be switched off for good, so the bar can
-  always be reached without a cable.
-- **Updates are checked.** A firmware downloaded by the bar must match the
-  release's SHA256 checksum, and HTTPS is checked against built-in root
-  certificates, never skipped.
-- **Stock's settings are never written.** The firmware reads stock's saved
-  Wi-Fi and printer pairing once and keeps its own settings separately, so going
-  back to stock finds everything as it was.
+  the next start leaves it off, so the bar stays reachable.
+- **Hotspot.** After a minute without Wi-Fi (or a 5 s button hold) the bar
+  starts `PandaP2-Setup`, password `panda` + the last six hex digits of its MAC
+  (the page shows it). Join it and open `http://192.168.4.1/`. It cannot be
+  switched off for good.
+- **Updates are checked.** Downloads must match the release's SHA256 checksum,
+  and HTTPS is checked against built-in root certificates, never skipped.
+- **Stock's settings are never written**, so going back to stock finds
+  everything as it was.
 
-## Going back to the stock firmware
+</details>
 
-- If you installed through stock, stock is still in the other slot: on this
-  firmware's page press **Start the firmware in the other slot**.
-- Otherwise install `releases/panda-p2-stock-v1.0.0-app.bin` from this
-  firmware's page (*Firmware → Install*). The bar restarts into stock V1.0.0.
+<details>
+<summary><b>↩️ Going back to the stock firmware</b></summary>
+<br>
 
-The stock image here is BIQU's V1.0.0 application image, exactly as it came
-off a P2, unmodified. It is the **application only**: it contains no Wi-Fi
-network, password, printer details or any other settings (those live in a
-separate part of the flash, which is not included), and it has been checked
-for them. It is BIQU's work, not covered by this project's licence, and is
-here only so a bar can be returned to stock: BIQU's release notes link
-V1.0.0 to their `Panda_Status_P2` repository, but at the time of writing that
-repository holds no firmware files.
+- If stock is still in the other slot: press **Start the firmware in the other
+  slot** on this firmware's page.
+- Otherwise install `panda-p2-stock-v1.0.0-app.bin` (in every release) with
+  **Firmware → Install file**.
 
-Back on stock, the bar's own defaults apply where it has nothing saved: host
-name `PandaStatus` (`http://PandaStatus.local`), setup hotspot
-`Panda_Status_P2_…` with password `987654321` at `192.168.254.1`, and white /
-white / red for idle / printing / error (from BIQU's documentation).
+That file is BIQU's V1.0.0 application image, unmodified. It holds no Wi-Fi,
+printer or other settings (those live elsewhere in the flash) and was checked
+for them. It is BIQU's work, not covered by this project's licence, and is here
+only for going back: BIQU's own release notes point to a repository that holds
+no firmware files.
 
-If a bar ever stops answering on the network altogether, it can be reflashed
-over its USB-C port with Espressif's `esptool` (115200 baud): write the stock
-image to `app0` at `0x10000` and erase `otadata` at `0xC000` so it boots from
-there.
+Back on stock, its own defaults apply: `http://PandaStatus.local`, hotspot
+`Panda_Status_P2_…` with password `987654321` at `192.168.254.1`.
 
-## The API: building your own apps
+If a bar stops answering altogether, reflash it over USB-C with Espressif's
+`esptool` (115200 baud): write the stock image to `0x10000` and erase
+`otadata` at `0xC000`.
 
-Everything the page does goes through a small JSON API, with no sign-in,
-the same as stock: anything on your network can use it. `GET /api` returns the
-list below as JSON.
+</details>
+
+<details>
+<summary><b>🧑‍💻 The API, for your own apps</b></summary>
+<br>
+
+JSON in, JSON out, no sign-in (the same as stock: anything on your network can
+use it). `GET /api` returns this list.
 
 | Call | Body | What it does |
 |---|---|---|
-| `GET /api/status` | | Everything: what is showing and why, printer link, microphone level, clock, add-ons, settings, the current 25-LED frame |
-| `POST /api/state` | `{"state":"printing","progress":42}` | A controller saying what the printer is doing. Repeat at least every 45 s; when it stops, the bar's own printer link takes over |
-| `POST /api/addon` | see below | An add-on saying what it wants shown |
-| `POST /api/config` | any subset of the settings | `brightness`, `mode`, `music.sensitivity`, `states.<state>.{colour,colour2,effect,speed}`, `cool.{minutes,target}`, `schedule.{enabled,from,to,level}`, `time.{tz,zone}`, `addon.{show,when}`, `order`, `reversed` |
-| `POST /api/preview` | `{"state":"cooling","progress":60,"seconds":8}` | Show a look for a few seconds without it counting as the printer's state |
-| `POST /api/printer` | `{"ip":"…","serial":"…","code":"…"}` | Pair with a printer; `{"forget":true}` unpairs. The access code is never sent back out |
-| `POST /api/addonfile` | `{"url":"https://…"}`, `{"file":{…}}` or `{"remove":true}` | An add-on the bar runs itself (see [the store's README](addons/store/README.md) for the format). Shown as soon as it loads |
-| `POST /api/update` | `{"check":true}`, `{"install":true}`, `{"auto":true}` | Look for a newer release on GitHub, install it, or switch the daily check on or off. Progress is in `/api/status` → `update` |
-| `POST /api/wifi` | `{"ssid":"…","password":"…"}` | Save Wi-Fi and restart to join |
-| `GET /api/wifi/scan` | | Networks in range (the first call starts the scan; ask again for the list) |
-| `POST /api/ap` | `{"always":false,"ssid":"…","password":"…"}` | The bar's own hotspot: on only when Wi-Fi fails (default) or always; its name and password |
-| `POST /api/slot` | | Restart into the firmware in the other slot |
-| `POST /api/reboot`, `POST /api/factory` | | Restart; clear this firmware's own settings |
-| `POST /update` | multipart file | Install a `.bin` into the other slot and restart into it |
+| `GET /api/status` | | Everything: what is showing and why, printer link, microphone, clock, add-ons, settings, the 25 LEDs |
+| `GET /api/frame` | | Just the 25 LED colours, as 150 hex digits |
+| `POST /api/state` | `{"state":"printing","progress":42}` | A controller saying what the printer is doing; repeat at least every 45 s |
+| `POST /api/addon` | see below | A program saying what it wants shown |
+| `POST /api/addonfile` | `{"url":"https://…"}`, `{"file":{…}}`, `{"remove":true}` | An add-on the bar runs itself ([format](addons/store/README.md)) |
+| `POST /api/config` | any subset of the settings | `brightness`, `mode`, `music.sensitivity`, `states.<state>.{colour,colour2,effect,speed}`, `cool.{minutes,target}`, `schedule.{…}`, `time.{tz,zone}`, `addon.{show,when}`, `order`, `reversed` |
+| `POST /api/preview` | `{"state":"cooling","progress":60,"seconds":8}` | Show a look for a few seconds |
+| `POST /api/printer` | `{"ip":"…","serial":"…","code":"…"}` | Pair; `{"forget":true}` unpairs. The code is never sent back out |
+| `POST /api/update` | `{"check":true}`, `{"install":true}`, `{"auto":true}` | Updates from GitHub |
+| `POST /api/wifi` | `{"ssid":"…","password":"…"}` | Save Wi-Fi and restart |
+| `GET /api/wifi/scan` | | Networks in range |
+| `POST /api/ap` | `{"always":false,"ssid":"…","password":"…"}` | The hotspot |
+| `POST /api/slot`, `/api/reboot`, `/api/factory` | | Other slot; restart; clear settings |
+| `POST /update` | multipart file | Install a `.bin` into the other slot |
 
-States: `idle`, `printing`, `paused`, `finished`, `cooling`, `ready`,
-`error`, `off`.
+States: `idle`, `printing`, `paused`, `finished`, `cooling`, `ready`, `error`, `off`.
 
-### Add-ons
+</details>
 
-An add-on is a program anywhere on your network, not code on the bar. It posts
-what it wants shown and keeps posting; each post lapses after its `ttl`
-(seconds), so a script that stops is dropped by itself. The owner picks on the
-page which add-on is shown, and when.
+<details>
+<summary><b>🧩 Writing an add-on</b></summary>
+<br>
 
-Send **one** of these, with an `id` and optionally a `name` and `ttl`:
+**As a file** the bar runs itself (a look, meters, an animation, or a live meter
+from a web address): see the [store's README](addons/store/README.md) for the
+format, and upload it from the page or add it to the store.
+
+**As a program** anywhere on your network: post what to show, and keep posting.
+Each post lapses after its `ttl` (seconds), so a program that stops is dropped by
+itself. Send **one** of these with an `id`, and optionally `name` and `ttl`:
 
 ```json
-{"id":"demo","name":"Demo","look":{"colour":"#8000FF","effect":"breathe","speed":40,"progress":100}}
+{"id":"demo","name":"Demo","look":{"colour":"#8000FF","effect":"breathe","speed":40}}
 {"id":"demo","name":"Demo","meters":[{"value":63,"colour":"#D97757"},{"value":20,"colour":"#3B82F6"}]}
 {"id":"demo","name":"Demo","frame":["#FF0000","#FF0000","… 25 colours in all …"]}
 ```
 
-- `look`: any of the effects above, as if it were a printer state.
-- `meters`: one to four bars sharing the strip, each a value from 0 to 100.
-- `frame`: all 25 LEDs set directly (or one string of 150 hex digits). Post
-  again to animate.
-- `{"id":"demo","remove":true}` withdraws it.
-
-The answer includes `"picked"`: whether yours is the add-on the owner chose.
-
-A meter at 63%, from any terminal:
+`{"id":"demo","remove":true}` withdraws it. The answer's `"picked"` says whether
+yours is the one the owner chose.
 
 ```sh
 curl -X POST http://<bar address>/api/addon -H "content-type: application/json" \
      -d '{"id":"demo","name":"Demo","meters":[{"value":63,"colour":"#D97757"}]}'
 ```
 
-`addons/meter.py` is a ready-made add-on: give it any command that prints a
-number from 0 to 100 and it keeps the bar up to date.
+`addons/meter.py` turns any command that prints a number from 0 to 100 into a
+meter:
 
 ```sh
 python3 addons/meter.py --bar 192.168.1.50 --id disk --name "Disk used" \
     --command "df --output=pcent / | tail -1 | tr -dc 0-9"
 ```
 
-## Building from source
+</details>
+
+<details>
+<summary><b>🛠️ Building from source</b></summary>
+<br>
 
 PlatformIO, Arduino framework for ESP32-C3 (`espressif32@6.9.0`):
 
@@ -290,23 +299,26 @@ cd firmware
 pio run            # result: .pio/build/panda/firmware.bin
 ```
 
-The partition table in `firmware/partitions.csv` is the stock one, unchanged,
-so stock and custom can sit side by side. The image must stay under 1.94 MB.
+`firmware/partitions.csv` is the stock table, unchanged, so stock and custom can
+sit side by side. The image must stay under 1.94 MB.
+
+</details>
+
+---
 
 ## Disclaimer
 
-This firmware is provided **as is**, without warranty of any kind, express or
-implied. Installing third-party firmware may void your warranty and can leave
-a device unusable. **The authors accept no responsibility or liability** for
-any damage, loss, injury, missed or failed prints, or any other consequence of
-using, installing or being unable to use this firmware or the stock image
-included here. You alone are responsible for deciding whether to use it.
+Provided **as is**, without warranty of any kind. Installing third-party
+firmware may void your warranty and can leave a device unusable. **The authors
+accept no responsibility or liability** for any damage, loss, injury, failed
+prints or other consequence of using, installing or being unable to use this
+firmware or the stock image included with it. You alone decide whether to use
+it.
 
 BIQU, BigTreeTech, Panda Status, Bambu Lab, P2S and X2D are trademarks of their
-respective owners and are used here only to say which hardware this is for.
+owners, used here only to say which hardware this is for.
 
 ## Licence
 
-The firmware source, the page and the add-on script are released under the
-[MIT licence](LICENSE). The stock firmware image in `releases/` is BIQU's and is
-not covered by it.
+The firmware, its page and the add-on script are [MIT licensed](LICENSE). The
+stock firmware image in the releases is BIQU's and is not covered by it.
