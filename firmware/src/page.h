@@ -48,6 +48,10 @@ button:hover{background:rgba(var(--ink),.17)}button.go{background:var(--text);co
 .tile .t{display:flex;align-items:center;gap:8px;font-weight:600;min-width:0}.tile .t span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .tile .d{font-size:12.5px;color:var(--t2);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .tile .acts{display:flex;gap:6px;margin-top:auto;padding-top:4px}.tile button{height:30px;font-size:12.5px}
+.tile .body{display:flex;flex-direction:column;gap:6px;min-width:0}
+/* A lone add-on gets the whole row: in a grid cell of its own it left most of the section empty. Text on the left, buttons on the right. */
+.tiles .tile.wide{grid-column:1/-1;flex-direction:row;align-items:center;gap:18px;padding:16px 18px}
+.tile.wide .body{flex:1}.tile.wide .d{-webkit-line-clamp:3}.tile.wide .acts{margin:0;padding:0;flex:none}
 .dot{flex:none;width:8px;height:8px;border-radius:50%;background:#64748b}.dot[data-live]{background:#22c55e;box-shadow:0 0 0 3px rgba(34,197,94,.18)}.dot[data-bad]{background:#f59e0b}
 .tag{margin-left:auto;flex:none;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:600;color:var(--t2);background:rgba(var(--ink),.07)}
 .empty{grid-column:1/-1;padding:16px;border-radius:18px;border:1px dashed var(--line);color:var(--t3);font-size:13px}
@@ -72,6 +76,7 @@ details.card[open]>summary{margin-bottom:12px}
 .tog{display:inline-flex;align-items:center;gap:8px;font-size:13px;color:var(--t2)}
 [hidden]{display:none!important}
 /* On a phone the board name, address and signal no longer fit beside the title and the theme switch: they take their own line underneath. */
+@media(max-width:560px){.tiles .tile.wide{flex-direction:column;align-items:stretch;gap:8px}}
 @media(max-width:560px){.head{flex-wrap:wrap;row-gap:6px}.head b{white-space:nowrap}.thm{margin-left:auto}.head .more{order:3;flex-basis:100%;margin-left:0}}
 @media(max-width:560px){.row{grid-template-columns:76px 40px 40px 1fr auto}.row .spd{display:none}.big{font-size:40px}}
 </style>
@@ -167,7 +172,7 @@ details.card[open]>summary{margin-bottom:12px}
   <div class="line"><label class="tog"><input type="checkbox" id="updauto"> Look for a new release once a day (it is never installed without you)</label></div>
   <div class="sub" id="slots" style="margin-top:12px"></div>
   <div class="line"><input class="grow" id="bin" type="file" accept=".bin"><button id="up">Install file</button></div>
-  <div class="line"><button id="other">Start the firmware in the other slot</button><button id="reboot">Restart</button><button id="factory">Reset settings</button></div>
+  <div class="line"><button id="other">Start the firmware in the other slot</button><button id="backup" hidden title="A copy of the stock firmware from the other slot. Keep it: an update later writes over that slot, and Install file puts this back.">Download the stock firmware</button><button id="reboot">Restart</button><button id="factory">Reset settings</button></div>
   <div class="msg" id="fwmsg"></div>
 </details>
 
@@ -239,8 +244,8 @@ function renderAddons(s){
   for(const a of s.addons){if(f.from&&a.id===f.id)continue;tiles.push({id:a.id,name:a.name,tag:'program',sub:a.kind+' · '+(a.fresh?'posted '+a.age+' s ago':'stopped posting'),live:a.fresh});}
   /* Picked but nothing is running it: replaced by another add-on file, or a program that stopped. Said plainly, with a way out. */
   if(want&&!tiles.some(t=>t.id===want))tiles.push({id:want,name:want,desc:'Picked, but nothing is running it now: it was replaced, or the program that posted it has stopped. Use it again from the store, or clear it.',tag:'not running',bad:true,missing:true});
-  const html=tiles.length?tiles.map(t=>'<div class="tile"'+(t.id&&t.id===want?' data-on':'')+'><div class="t"><i class="dot"'+(t.live?' data-live':'')+(t.bad?' data-bad':'')+'></i><span>'+esc(t.name)+'</span><em class="tag">'+t.tag+'</em></div>'
-    +(t.desc?'<div class="d">'+esc(t.desc)+'</div>':'')+'<div class="sub">'+esc(t.sub||'')+(s.addonShowing&&s.addonShowing===t.id?' · on the bar now':'')+'</div>'
+  const html=tiles.length?tiles.map(t=>'<div class="tile'+(tiles.length===1?' wide':'')+'"'+(t.id&&t.id===want?' data-on':'')+'><div class="body"><div class="t"><i class="dot"'+(t.live?' data-live':'')+(t.bad?' data-bad':'')+'></i><span>'+esc(t.name)+'</span><em class="tag">'+t.tag+'</em></div>'
+    +(t.desc?'<div class="d">'+esc(t.desc)+'</div>':'')+'<div class="sub">'+esc(t.sub||'')+(s.addonShowing&&s.addonShowing===t.id?' · on the bar now':'')+'</div></div>'
     +'<div class="acts">'+(t.missing?'<button data-pick="">Clear</button>':t.id?(t.id===want?'<button class="go" disabled>Picked</button>':'<button data-pick="'+esc(t.id)+'">Show this</button>'):'')+(t.file?'<button data-remove="1">Remove</button>':'')+'</div></div>').join('')
     :'<div class="empty">Nothing yet. Pick one from the store below, or upload a file of your own.</div>';
   if(html!==window.adHtml){window.adHtml=html;$('adtiles').innerHTML=html;}
@@ -252,6 +257,7 @@ function renderAddons(s){
 $('adtiles').onclick=async(e)=>{const b=e.target.closest('button');if(!b)return;if(b.dataset.pick!==undefined)pick(b.dataset.pick);
   if(b.dataset.remove){if(!confirm('Remove this add-on from the bar?'))return;const r=await post('/api/addonfile',{remove:true});$('admsg').textContent=r.message||'';}};
 $('adnone').onclick=()=>pick('');
+$('backup').onclick=()=>{location.href='/api/otherslot.bin';};
 $('adup').onclick=()=>$('adfile').click();
 $('adfile').onchange=async()=>{const file=$('adfile').files[0];$('adfile').value='';if(!file)return;let obj;
   try{obj=JSON.parse(await file.text());}catch(e){$('admsg').textContent='That file is not valid JSON';return;}
@@ -469,7 +475,7 @@ async function tick(){
   if(Date.now()-busy>3000){$('bri').value=s.config.brightness;} $('briv').textContent=$('bri').value+'%';
   const o=s.otherSlot;
   $('slots').textContent='Running from '+s.slot+' ('+s.build+')'+(s.onTrial?' · on trial until it has been on Wi-Fi for 20 s':'')+'. Other slot ('+o.label+'): '+(o.project?o.project+' '+o.version+', built '+o.built:'empty')+'.';
-  $('other').disabled=!o.project;
+  $('other').disabled=!o.project; $('backup').hidden=!o.project||o.ours;
   /* What a closed section says about itself. */
   $('lookssum').textContent=['idle','printing','error'].map(n=>{const l=s.config.states[n];return n.charAt(0).toUpperCase()+n.slice(1)+' '+(l?l.effect:'');}).join(' · ')+' · and five more';
   const sc=s.config.schedule;

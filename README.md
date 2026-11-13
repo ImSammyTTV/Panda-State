@@ -239,7 +239,8 @@ later by hand once.)
 **Keeping stock.** Any update goes into the *other* slot, which replaces what is
 there, stock included. To keep stock in it, update through stock instead: press
 *Start the firmware in the other slot*, then upload the new image through stock
-as above.
+as above. Or download a copy of stock first (*Download the stock firmware*) and
+update the easy way: the copy can be put back any time.
 
 </details>
 
@@ -273,6 +274,11 @@ stock your own bar already has:
 - **Stock is in the other slot** after the first install, and stays there as
   long as you update through stock (see *Keeping stock* above). Press **Start
   the firmware in the other slot** on this firmware's page.
+- **Download a copy of it** with **Download the stock firmware** in the
+  Firmware section (0.7.5 and later), ideally right after the first install.
+  It is the stock firmware image only, with no Wi-Fi password or printer code
+  in it. If an update has since written over stock's slot, put the copy back
+  with **Install file**, which writes it into the other slot.
 - **A full backup before the first install** is the surest way back of all,
   over USB-C with Espressif's `esptool` (115200 baud):
   `esptool.py --baud 115200 read_flash 0 0x400000 backup.bin`. Keep it to

@@ -38,6 +38,7 @@
 #include <driver/i2s.h>
 #include <nvs.h>
 #include <esp_ota_ops.h>
+#include <esp_image_format.h>
 #include <HTTPClient.h>
 #include <memory>
 #include <mbedtls/sha256.h>
@@ -47,7 +48,7 @@
 
 /* What the firmware calls itself on its page and in /api/status. Plain and generic, so it says what it is on anyone's network. */
 #define FW_NAME "panda"
-#define FW_VERSION "0.7.4"
+#define FW_VERSION "0.7.5"
 /* Where new releases and the add-on store live. A release must carry a
    panda-<board>-custom-<version>.bin for each board and a SHA256SUMS.txt that lists them. */
 #define UPDATE_REPO "ImSammyTTV/Panda-State"
@@ -1873,6 +1874,9 @@ static void handleStatus() {
     otherDoc["project"] = desc.project_name;
     otherDoc["version"] = desc.version;
     otherDoc["built"] = String(desc.date) + " " + desc.time;
+    // Whether it is this firmware again (an older Panda State) or something else, normally stock: the page offers the backup for the latter.
+    const esp_app_desc_t *mine = esp_ota_get_app_description();
+    otherDoc["ours"] = mine && strcmp(mine->project_name, desc.project_name) == 0;
   } else {
     otherDoc["label"] = other ? other->label : "?";
     otherDoc["project"] = nullptr;
@@ -2170,6 +2174,34 @@ static void handlePrinter() {
   prGcode[0] = 0; prPercent = -1; prBed = NAN; prLastMsgAt = 0; prConnected = false;
   prRestart = true;
   sendResult(true, !ip.length() ? "Unpaired." : klipper ? "Saved. Asking Klipper." : "Saved. Connecting to the printer.");
+}
+
+/* The firmware in the other slot, as a file: after the first install that is
+   the board's own stock firmware, and a copy of it is the way back if an
+   update later writes over that slot. Only the image is sent (its length read
+   from its own header), never the settings store, so no Wi-Fi password or
+   printer code is in it. Put it back with Install file. */
+static void handleOtherSlotDownload() {
+  const esp_partition_t *part;
+  esp_app_desc_t desc;
+  if (!otherSlot(part, desc)) return sendResult(false, "There is no firmware in the other slot");
+  const esp_partition_pos_t pos = {part->address, part->size};
+  esp_image_metadata_t meta = {};
+  if (esp_image_verify(ESP_IMAGE_VERIFY_SILENT, &pos, &meta) != ESP_OK || !meta.image_len || meta.image_len > part->size)
+    return sendResult(false, "The firmware in the other slot does not check out, so it was not copied");
+  String name = String(desc.project_name) + "-" + desc.version + "-backup.bin";
+  for (size_t i = 0; i < name.length(); i++) if (!isalnum((unsigned char)name[i]) && name[i] != '.' && name[i] != '-' && name[i] != '_') name.setCharAt(i, '_');
+  std::unique_ptr<uint8_t[]> buf(new (std::nothrow) uint8_t[4096]);
+  if (!buf) return sendResult(false, "Not enough memory right now; try again in a moment");
+  server.setContentLength(meta.image_len);
+  server.sendHeader("Content-Disposition", "attachment; filename=\"" + name + "\"");
+  server.send(200, "application/octet-stream", "");
+  for (uint32_t at = 0; at < meta.image_len;) {
+    const uint32_t n = min<uint32_t>(4096, meta.image_len - at);
+    if (esp_partition_read(part, at, buf.get(), n) != ESP_OK) break;
+    server.sendContent((const char *)buf.get(), n);
+    at += n;
+  }
 }
 
 static void handleSlot() {
@@ -3196,6 +3228,7 @@ void setup() {
   server.on("/api/wifi", HTTP_POST, handleWifi);
   server.on("/api/printer", HTTP_POST, handlePrinter);
   server.on("/api/slot", HTTP_POST, handleSlot);
+  server.on("/api/otherslot.bin", HTTP_GET, handleOtherSlotDownload);
   server.on("/api/reboot", HTTP_POST, handleReboot);
   server.on("/api/factory", HTTP_POST, handleFactory);
   /* Just the 25 colours, for the page's live picture: a few hundred bytes, so it can be asked five times a second where the full status is asked once. */
