@@ -51,7 +51,13 @@ API.
 The bar restarts into it in a few seconds, on the same Wi-Fi and still paired.
 From then on it updates itself: **Firmware → Check for updates → Install**.
 
-## Which boards
+---
+
+<a id="which-boards"></a>
+
+<details>
+<summary><b>🔌 Which boards</b></summary>
+<br>
 
 All four are ESP32-C3 boards from BIQU. Each has its own image, because the
 pins differ and the wrong pins on the wrong board is not something to guess at
@@ -88,7 +94,7 @@ ESP32, not a C3) and its main job is a motor, whose driver and end-stop
 sensing would have to be worked out from its firmware before anything could
 safely move it.
 
----
+</details>
 
 <details>
 <summary><b>📸 A tour of the bar's page</b></summary>
