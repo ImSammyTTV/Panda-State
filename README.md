@@ -125,10 +125,10 @@ It works because:
 ## Installing
 
 You need: a Panda Status P2 on your Wi-Fi, its IP address (the stock app or
-your router shows it), and `releases/panda-p2-custom-0.6.4.bin`.
+your router shows it), and `releases/panda-p2-custom-0.6.5.bin`.
 
 **From the stock firmware's page:** open `http://<bar address>/`, find the
-firmware update section, choose `panda-p2-custom-0.6.4.bin` and upload it.
+firmware update section, choose `panda-p2-custom-0.6.5.bin` and upload it.
 
 **Or from a terminal:**
 
@@ -136,12 +136,12 @@ firmware update section, choose `panda-p2-custom-0.6.4.bin` and upload it.
 curl -X POST http://<bar address>/ota \
      -H "OTA-Type: ota_fw" \
      -H "Content-Type: application/octet-stream" \
-     --data-binary @releases/panda-p2-custom-0.6.4.bin
+     --data-binary @releases/panda-p2-custom-0.6.5.bin
 ```
 
 The bar restarts into the new firmware within a few seconds, joins the same
 Wi-Fi and keeps its printer pairing. Open `http://<bar address>/` again: the
-page now says *v0.6.4*.
+page now says *v0.6.5*.
 
 Check the download against `releases/SHA256SUMS.txt` first.
 

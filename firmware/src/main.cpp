@@ -44,7 +44,7 @@
 
 /* What the firmware calls itself on its page and in /api/status. Plain and generic, so it says what it is on anyone's network. */
 #define FW_NAME "panda"
-#define FW_VERSION "0.6.4"
+#define FW_VERSION "0.6.5"
 /* Where new releases and the add-on store live. A release must carry a
    panda-p2-custom-<version>.bin and a SHA256SUMS.txt that lists it. */
 #define UPDATE_REPO "ImSammyTTV/panda-status-p2-firmware"
@@ -2140,6 +2140,8 @@ static void faTick() {
     const String url = prefs.getString("faurl", "");
     /* Nothing is taken down until the new one can actually be fetched. */
     if (url.length() && WiFi.status() != WL_CONNECTED) { faError = "Waiting for Wi-Fi to fetch it"; return; }
+    /* A certificate is checked against today's date, which the bar only has once it has asked the internet: before that every HTTPS fetch fails with a certificate error (seen right after each restart, 0.6.3). */
+    if (url.length() && !timeKnown()) { faError = ""; return; }
     faReload = false;
     faRemove();
     faUrl = url;
@@ -2191,7 +2193,7 @@ static void faTick() {
     faFrameAt = (faFrameAt + 1) % faFrameCount;
     faPushedAt = now;
   } else if (faKind == FA_SOURCE) {
-    if ((!faFetchedAt || now - faFetchedAt >= faEveryMs) && now - faTriedAt > 30000 && WiFi.status() == WL_CONNECTED) {
+    if ((!faFetchedAt || now - faFetchedAt >= faEveryMs) && now - faTriedAt > 30000 && WiFi.status() == WL_CONNECTED && timeKnown()) {
       faTriedAt = now;
       float value;
       if (faFetchValue(value)) { faValue = value; faFetchedAt = now; faError = ""; }
@@ -2219,10 +2221,12 @@ static void onlineTask(void *) {
     if (!online) onlineSince = 0;
     else if (!onlineSince) onlineSince = millis();
 
+    /* A request made before the clock is set waits for it (a few seconds after Wi-Fi), rather than failing on the certificate. */
+    if (updWant && online && !timeKnown()) { vTaskDelay(pdMS_TO_TICKS(250)); continue; }
     if (updWant == 1) { updWant = 0; if (online) updCheck(); else { updMessage = "Not on Wi-Fi"; updPhase = UPD_FAILED; } }
     if (updWant == 2) { updWant = 0; if (online) updInstall(); else { updMessage = "Not on Wi-Fi"; updPhase = UPD_FAILED; } }
     /* Once a day, a couple of minutes after joining Wi-Fi: only to say on the page that there is one. */
-    if (updAuto && online && onlineSince && millis() - onlineSince > 120000 && updPhase != UPD_DOWNLOADING
+    if (updAuto && online && timeKnown() && onlineSince && millis() - onlineSince > 120000 && updPhase != UPD_DOWNLOADING
         && (!updCheckedAt || millis() - updCheckedAt > 86400000UL) && millis() - updCheckedAt > 600000UL) {
       updCheck();
       if (!updCheckedAt) updCheckedAt = millis();   // a failed daily look waits its turn rather than retrying every pass
