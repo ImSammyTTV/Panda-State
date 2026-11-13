@@ -296,7 +296,8 @@ $('up').onclick=()=>{
 async function tick(){
   let s; try{s=await fetch('/api/status').then(r=>r.json());}catch(e){$('net').textContent='not answering';return;}
   if(!built) build(s);
-  $('fw').textContent=s.firmware+' '+s.version;
+  /* Capitalised for show only: other programs recognise the firmware by its lower-case name in /api/status. */
+  $('fw').textContent=s.firmware.charAt(0).toUpperCase()+s.firmware.slice(1)+' '+s.version;
   $('net').textContent=(s.setupNetwork?'setup network up · ':'')+s.ip+(s.rssi?' · '+s.rssi+' dBm':'');
   $('state').textContent=s.state;
   const look=s.config.states[s.state]; document.documentElement.style.setProperty('--c',look?look.colour:'#64748b');
