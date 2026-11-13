@@ -95,10 +95,10 @@ details.card[open]>summary{margin-bottom:12px}
   <summary><h2>Add-ons</h2><span class="sum" id="adsum"></span><i class="chev"></i></summary>
   <div class="sub">Show something else on the bar when the printer has nothing to say.</div>
   <div class="tiles" id="adtiles"></div>
-  <div class="line"><label for="adwhen">Show it</label><select id="adwhen" style="width:auto;max-width:100%"><option value="idle">while the printer is not busy with a print</option><option value="always">always, even while printing</option></select><button id="adnone" hidden>Show nothing</button><span class="grow"></span><button id="adup">Upload a file</button><input id="adfile" type="file" accept=".json,application/json" hidden></div>
+  <div class="line"><label for="adwhen">Show it</label><select id="adwhen" style="width:auto;max-width:100%"><option value="idle">while the printer is not busy with a print</option><option value="always">always, even while printing</option></select><button id="adnone" hidden>Show nothing</button></div>
   <div class="msg" id="admsg"></div>
   <div class="panel" id="storepanel">
-    <div class="head2" style="margin:0"><h2>Store</h2><span class="sp"><span class="sub" id="storenote"></span></span></div>
+    <div class="head2" style="margin:0"><h2>Store</h2><span class="sp"><span class="sub" id="storenote" style="align-self:center"></span><button id="adup">Upload a file</button><input id="adfile" type="file" accept=".json,application/json" hidden></span></div>
     <div class="store" id="storelist"></div>
   </div>
   <details class="byo"><summary>Build your own</summary>
