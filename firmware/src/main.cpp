@@ -49,7 +49,7 @@
 
 /* What the firmware calls itself on its page and in /api/status. Plain and generic, so it says what it is on anyone's network. */
 #define FW_NAME "panda"
-#define FW_VERSION "0.7.9"
+#define FW_VERSION "0.7.10"
 /* Where new releases and the add-on store live. A release must carry a
    panda-<board>-custom-<version>.bin for each board and a SHA256SUMS.txt that lists them. */
 #define UPDATE_REPO "ImSammyTTV/Panda-State"
@@ -2314,7 +2314,17 @@ struct Fetch {
   HTTPClient http;
   String host;                 // the server of the last hop, for the error message
   bool held = false;           // the printer link was let go for this download; picked up again when it is done
+  bool holdFirst = false;      // let the printer link go before the first try, not after it fails: a failed handshake costs seconds someone is watching
+  void hold() {
+    held = true;
+    prHoldAck = false;
+    prHold = true;
+    prRestart = true;
+    for (int i = 0; i < 150 && !prHoldAck; i++) delay(100);
+    delay(300);
+  }
   int begin(String url, uint32_t timeoutMs = 15000) {
+    if (holdFirst && !held && url.startsWith("https://") && prKind == PR_BAMBU && prPaired()) hold();
     static const char *keep[] = {"Location"};
     for (int hop = 0; hop < 5; hop++) {
       http.end();
@@ -2343,12 +2353,7 @@ struct Fetch {
          X509 errors on and off). It waits for the printer task to say it has
          let go, which can take a handshake timeout, rather than guessing. */
       if (code < 0 && secure && !held && prKind == PR_BAMBU && prPaired()) {
-        held = true;
-        prHoldAck = false;
-        prHold = true;
-        prRestart = true;
-        for (int i = 0; i < 150 && !prHoldAck; i++) delay(100);
-        delay(300);
+        hold();
         http.end();
         tls.stop();
         tls.setCACert(ROOT_CAS);
@@ -2578,6 +2583,7 @@ static const char *faLoad(const String &text) {
   faKind = FA_NONE;
   faValue = NAN;
   faFetchedAt = faPushedAt = 0;
+  faTriedAt = 0;  // a new add-on gets its first reading straight away, not after the 30 s spacing left over from the one before it
 
   if (!doc["frames"].isNull()) {
     JsonArrayConst list = doc["frames"]["list"].as<JsonArrayConst>();
@@ -2686,6 +2692,7 @@ static bool pathNumber(JsonDocument &doc, const String &path, float &out) {
 /* A number out of a JSON answer, by a path like "data.0.price"; an empty path means the answer is the number. */
 static bool faFetchValue(float &out) {
   Fetch f;
+  f.holdFirst = !faFetchedAt;  // the first reading is the one someone is waiting for on the page
   const int code = f.begin(faSrcUrl);
   if (code != 200) { faError = f.error(code); return false; }
   const int size = f.http.getSize();
@@ -2856,7 +2863,7 @@ static void faTick() {
     }
     xSemaphoreGive(addonLock);
   } else if (faKind == FA_SOURCE) {
-    if ((!faFetchedAt || now - faFetchedAt >= faEveryMs) && now - faTriedAt > 30000 && WiFi.status() == WL_CONNECTED && timeKnown()) {
+    if ((!faFetchedAt || now - faFetchedAt >= faEveryMs) && (!faTriedAt || now - faTriedAt > 30000) && WiFi.status() == WL_CONNECTED && timeKnown()) {
       faTriedAt = now;
       float value;
       if (faFetchValue(value)) { faValue = value; faFetchedAt = now; faError = ""; }

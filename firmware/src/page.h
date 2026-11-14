@@ -386,13 +386,19 @@ function ask(o){
 async function sendAddon(body,step){
   step(30,'Sending it to the bar…');
   const r=await post('/api/addonfile',body);if(!r.ok)throw new Error(r.message||'The bar did not take it');
+  /* Each look at the bar has its own time limit, so one dropped answer cannot leave the pop-up waiting for ever (it did, on a live meter). */
+  const look=async()=>{const c=new AbortController(),t=setTimeout(()=>c.abort(),3000);try{return await fetch('/api/status',{signal:c.signal}).then(x=>x.json());}catch(e){return null;}finally{clearTimeout(t);}};
+  let loadedAt=0;
   for(let i=0;i<60;i++){
     await new Promise(res=>setTimeout(res,500));
-    let s;try{s=await fetch('/api/status').then(x=>x.json());}catch(e){continue;}
+    const s=await look();if(!s)continue;
     const f=s.addonFile;
     if(f.loading){step(50,'Loading it…');continue;}
     if(f.error&&!/^Waiting/.test(f.error)&&f.kind==='none')throw new Error(f.error);
-    if(f.kind==='source'&&f.value===undefined){step(75,f.error?f.error:'Getting its first reading…');continue;}
+    /* A live meter is on the bar once it has loaded; its first reading is waited for a little, not without end. */
+    if(f.kind==='source'&&f.value===undefined){if(!loadedAt)loadedAt=Date.now();
+      if(Date.now()-loadedAt<15000){step(75,f.error?f.error:'Getting its first reading…');continue;}
+      step(100,'On the bar. Its first reading is on its way.');await new Promise(res=>setTimeout(res,1200));setTimeout(openStore,300);return;}
     step(100,'On the bar');await new Promise(res=>setTimeout(res,400));setTimeout(openStore,300);return;
   }
   throw new Error('The bar is still working on it; it will appear once it has loaded');
