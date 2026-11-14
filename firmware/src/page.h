@@ -78,6 +78,14 @@ details.card[open]>summary{margin-bottom:12px}
 select.pill{width:auto;max-width:100%;height:34px;border:0;border-radius:999px;background-color:rgba(var(--ink),.09);padding:0 34px 0 14px;font-size:13px;appearance:none;-webkit-appearance:none;cursor:pointer;
 background-image:linear-gradient(45deg,transparent 50%,var(--t2) 50%),linear-gradient(135deg,var(--t2) 50%,transparent 50%);background-position:calc(100% - 18px) 15px,calc(100% - 13px) 15px;background-size:5px 5px;background-repeat:no-repeat}
 select.pill:hover{background-color:rgba(var(--ink),.17)}
+/* The store's pop-up: the page behind is blurred, so the question is the only thing to look at. */
+.modal{position:fixed;inset:0;z-index:50;display:grid;place-items:center;padding:16px;background:rgba(0,0,0,.32);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);animation:fadein .15s ease-out}
+.sheet{width:min(440px,100%);border-radius:24px;padding:22px 22px 18px;background:var(--card);border:1px solid var(--line);box-shadow:0 24px 70px rgba(0,0,0,.45)}
+.sheet h3{margin:0 0 4px;font-size:18px;font-weight:600}.sheet .prog{margin-top:16px}.sheet .msg{min-height:18px}
+.field{display:flex;flex-direction:column;gap:6px;margin-top:14px}.field label{font-size:13px;color:var(--t2)}.field .sub{font-size:12px}
+.field input{width:100%;height:38px;border-radius:12px;border:1px solid var(--line);background:rgba(var(--ink),.06);color:var(--text);padding:0 12px;font:inherit;font-size:14px;color-scheme:var(--scheme)}
+.mbtns{justify-content:flex-end;margin-top:14px}
+@keyframes fadein{from{opacity:0}to{opacity:1}}
 .tog{display:inline-flex;align-items:center;gap:8px;font-size:13px;color:var(--t2)}
 [hidden]{display:none!important}
 /* On a phone the board name, address and signal no longer fit beside the title and the theme switch: they take their own line underneath. */
@@ -182,7 +190,13 @@ select.pill:hover{background-color:rgba(var(--ink),.17)}
   <div class="msg" id="fwmsg"></div>
 </details>
 
-</main><script>
+</main>
+<div class="modal" id="modal" hidden><div class="sheet" role="dialog" aria-modal="true" aria-labelledby="mtitle">
+  <h3 id="mtitle"></h3><div class="sub" id="msub"></div><div id="mbody"></div>
+  <div class="prog" id="mprog" hidden><i></i></div><div class="msg" id="mmsg"></div>
+  <div class="line mbtns"><button id="mcancel">Cancel</button><button class="go" id="mok">Add</button></div>
+</div></div>
+<script>
 const $=(id)=>document.getElementById(id);
 const post=(path,body)=>fetch(path,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body||{})}).then(r=>r.json()).catch(()=>({ok:false,message:'The bar did not answer'}));
 const STATES=['idle','printing','paused','finished','cooling','ready','error','offline'];
@@ -244,7 +258,7 @@ function renderAddons(s){
   const f=s.addonFile, want=s.config.addon.show, tiles=[];
   if(f.from||f.loading||f.error){
     const posted=s.addons.find(a=>a.id===f.id);
-    tiles.push({id:f.id,name:f.name||(f.loading?'Loading…':'Add-on file'),desc:f.error||f.description,tag:f.from==='store'?'':'file',
+    tiles.push({id:f.id,name:f.name||(f.loading?'Loading…':'Add-on file'),desc:f.error||f.description,tag:'',
       sub:[f.kind!=='none'?f.kind:'',f.value!==undefined?'reads '+(+f.value).toPrecision(4):'',f.author?'by '+f.author:''].filter(Boolean).join(' · '),live:posted&&posted.fresh,bad:!!f.error,file:true});
   }
   for(const a of s.addons){if(f.from&&a.id===f.id)continue;tiles.push({id:a.id,name:a.name,tag:'program',sub:a.kind+' · '+(a.fresh?'posted '+a.age+' s ago':'stopped posting'),live:a.fresh});}
@@ -354,48 +368,60 @@ function simTick(now){
 }
 requestAnimationFrame(simTick);
 openStore();
-$('storelist').onclick=async(e)=>{const b=e.target.closest('button');if(!b||!b.dataset.url)return;
-  /* An add-on for a place (weather, air): this page asks for the town, finds it with Open-Meteo's free place search, and hands the bar a copy with the place filled in. Only the coordinates go to the bar; nothing is looked up from the bar's own address. */
-  if(b.dataset.needs==='place'){
-    const town=prompt('Which town or suburb is the bar in?');if(!town)return;
-    b.disabled=true;b.textContent='Finding it…';
-    try{
-      const g=await fetch('https://geocoding-api.open-meteo.com/v1/search?count=1&name='+encodeURIComponent(town.trim())).then(r=>r.json());
-      const at=g.results&&g.results[0];if(!at)throw new Error('Could not find "'+town+'"');
-      let text=await fetch(b.dataset.url,{cache:'no-store'}).then(r=>r.text());
-      text=text.split('{lat}').join(at.latitude.toFixed(3)).split('{lon}').join(at.longitude.toFixed(3)).split('{place}').join(at.name.replace(/"/g,''));
-      const r=await post('/api/addonfile',{file:JSON.parse(text)});
-      $('admsg').textContent=r.ok?'Added for '+at.name+(at.admin1?', '+at.admin1:'')+(at.country?', '+at.country:'')+'.':(r.message||'Not accepted');
-    }catch(err){$('admsg').textContent=err.message||'That did not work';}
-    setTimeout(openStore,2000);return;
-  }
-  /* A share: the page asks for its code and hands the bar a copy with it filled in. */
-  if(b.dataset.needs==='symbol'){
-    const code=(prompt('Which stock? Its code, e.g. AAPL, or with the exchange for others: BHP.AX (ASX), VOD.L (London)')||'').trim().toUpperCase();if(!code)return;
-    if(!/^[A-Z0-9.^=-]{1,12}$/.test(code)){$('admsg').textContent='"'+code+'" does not look like a stock code';return;}
-    return useFilled(b,{'{symbol}':code},'Added '+code+'. The bar fetches its price every 5 minutes.');
-  }
-  /* A countdown: the page asks what for and when, and fills in now as the start, so the bar knows how full to begin. */
-  if(b.dataset.needs==='countdown'){
-    const label=(prompt('What is it counting down to? (shown as its name)','Countdown')||'').trim();if(!label)return;
-    const when=(prompt('When does it end? Date and time, e.g. 2026-12-25 07:00')||'').trim();if(!when)return;
-    const m=when.match(/^(\d{4})-(\d{1,2})-(\d{1,2})(?:[ T](\d{1,2}):(\d{2}))?$/);
-    if(!m){$('admsg').textContent='Write it as YYYY-MM-DD HH:MM, e.g. 2026-12-25 07:00';return;}
-    const p2=(n)=>String(n).padStart(2,'0'),end=new Date(+m[1],+m[2]-1,+m[3],+(m[4]||0),+(m[5]||0)),now=new Date();
-    if(!(end>now)){$('admsg').textContent='That time has already passed';return;}
-    const fmt=(d)=>d.getFullYear()+'-'+p2(d.getMonth()+1)+'-'+p2(d.getDate())+'T'+p2(d.getHours())+':'+p2(d.getMinutes());
-    return useFilled(b,{'{label}':label.replace(/["\\]/g,'').slice(0,27),'{from}':fmt(now),'{to}':fmt(end)},'Counting down to '+label+', '+end.toLocaleString()+'.');
-  }
-  b.disabled=true;b.textContent='Adding…';
-  const r=await post('/api/addonfile',{url:b.dataset.url});$('admsg').textContent=r.ok?'Added. The bar is fetching it from GitHub.':(r.message||'Not accepted');setTimeout(openStore,3000);};
-async function useFilled(b,fill,said){
-  b.disabled=true;b.textContent='Adding…';
-  try{let text=await fetch(b.dataset.url,{cache:'no-store'}).then(r=>r.text());
-    for(const [k,v] of Object.entries(fill))text=text.split(k).join(v);
-    const r=await post('/api/addonfile',{file:JSON.parse(text)});$('admsg').textContent=r.ok?said:(r.message||'Not accepted');}
-  catch(err){$('admsg').textContent=err.message||'That did not work';}
-  setTimeout(openStore,2000);
+/* Adding from the store. Every add-on that needs an answer (a town, a stock, a time) asks in one pop-up over the page, with proper inputs (a real date and time picker for a countdown), and the pop-up stays open with a progress bar until the bar says the add-on is running, so nothing is left wondering whether the click worked. */
+function ask(o){
+  $('mtitle').textContent=o.title;$('msub').textContent=o.sub||'';$('mmsg').textContent='';$('mprog').hidden=true;$('mok').textContent=o.ok||'Add';$('mok').disabled=false;
+  $('mbody').innerHTML=(o.fields||[]).map(f=>'<div class="field"><label for="mf-'+f.id+'">'+esc(f.label)+'</label><input id="mf-'+f.id+'" type="'+(f.type||'text')+'"'+(f.min?' min="'+f.min+'"':'')+' placeholder="'+esc(f.placeholder||'')+'" value="'+esc(f.value||'')+'" autocomplete="off" spellcheck="false">'+(f.hint?'<div class="sub">'+esc(f.hint)+'</div>':'')+'</div>').join('');
+  $('modal').hidden=false;const first=$('mbody').querySelector('input');if(first)setTimeout(()=>first.focus(),50);
+  const close=()=>{$('modal').hidden=true;$('modal').onclick=null;document.onkeydown=null;};
+  const go=async()=>{const v={};(o.fields||[]).forEach(f=>{v[f.id]=$('mf-'+f.id).value.trim();});
+    $('mok').disabled=true;$('mmsg').textContent='';
+    try{await o.act(v,(pct,text)=>{$('mprog').hidden=false;$('mprog').firstChild.style.width=pct+'%';$('mmsg').textContent=text;});close();}
+    catch(err){$('mmsg').textContent=err.message||'That did not work';$('mprog').hidden=true;$('mok').disabled=false;}};
+  $('mok').onclick=go;$('mcancel').onclick=close;
+  $('modal').onclick=(e)=>{if(e.target===$('modal'))close();};
+  document.onkeydown=(e)=>{if(e.key==='Escape')close();else if(e.key==='Enter'&&!$('mok').disabled)go();};
 }
+/* Hands the bar a file, then follows it until it is running: loaded, and for a live meter its first reading in. */
+async function sendAddon(body,step){
+  step(30,'Sending it to the bar…');
+  const r=await post('/api/addonfile',body);if(!r.ok)throw new Error(r.message||'The bar did not take it');
+  for(let i=0;i<60;i++){
+    await new Promise(res=>setTimeout(res,500));
+    let s;try{s=await fetch('/api/status').then(x=>x.json());}catch(e){continue;}
+    const f=s.addonFile;
+    if(f.loading){step(50,'Loading it…');continue;}
+    if(f.error&&!/^Waiting/.test(f.error)&&f.kind==='none')throw new Error(f.error);
+    if(f.kind==='source'&&f.value===undefined){step(75,f.error?f.error:'Getting its first reading…');continue;}
+    step(100,'On the bar');await new Promise(res=>setTimeout(res,400));setTimeout(openStore,300);return;
+  }
+  throw new Error('The bar is still working on it; it will appear once it has loaded');
+}
+async function storeText(url){const r=await fetch(url,{cache:'no-store'});if(!r.ok)throw new Error('Could not read it from the store');return r.text();}
+const fillIn=(text,fill)=>{for(const [k,v] of Object.entries(fill))text=text.split(k).join(v);return JSON.parse(text);};
+const pad2=(n)=>String(n).padStart(2,'0'),localStamp=(d)=>d.getFullYear()+'-'+pad2(d.getMonth()+1)+'-'+pad2(d.getDate())+'T'+pad2(d.getHours())+':'+pad2(d.getMinutes());
+$('storelist').onclick=(e)=>{const b=e.target.closest('button');if(!b||!b.dataset.url)return;
+  const url=b.dataset.url,card=b.closest('.tile'),name=card?card.querySelector('.t span').textContent:'Add-on';
+  /* A place (weather, air): the town is found with Open-Meteo's free place search, and only its coordinates go to the bar. */
+  if(b.dataset.needs==='place')return ask({title:name,sub:'Which town or suburb is the bar in?',fields:[{id:'town',label:'Town or suburb',placeholder:'e.g. Geelong'}],
+    act:async(v,step)=>{if(!v.town)throw new Error('Type a town or suburb');step(10,'Finding '+v.town+'…');
+      const g=await fetch('https://geocoding-api.open-meteo.com/v1/search?count=1&name='+encodeURIComponent(v.town)).then(r=>r.json());
+      const at=g.results&&g.results[0];if(!at)throw new Error('Could not find "'+v.town+'"');
+      const file=fillIn(await storeText(url),{'{lat}':at.latitude.toFixed(3),'{lon}':at.longitude.toFixed(3),'{place}':at.name.replace(/"/g,'')});
+      await sendAddon({file},step);$('admsg').textContent='Added for '+at.name+(at.admin1?', '+at.admin1:'')+(at.country?', '+at.country:'')+'.';}});
+  if(b.dataset.needs==='symbol')return ask({title:name,sub:'Which share should the bar follow?',fields:[{id:'code',label:'Stock code',placeholder:'e.g. AAPL',hint:'Add the exchange for markets outside the US: BHP.AX for the ASX, VOD.L for London.'}],
+    act:async(v,step)=>{const code=v.code.toUpperCase();if(!/^[A-Z0-9.^=-]{1,12}$/.test(code))throw new Error(code?'"'+code+'" does not look like a stock code':'Type a stock code');
+      await sendAddon({file:fillIn(await storeText(url),{'{symbol}':code})},step);$('admsg').textContent='Following '+code+'. Its price is checked every 5 minutes.';}});
+  if(b.dataset.needs==='countdown'){const soon=new Date(Date.now()+864e5);soon.setMinutes(0);
+    return ask({title:name,sub:'The bar starts full and empties as the time gets closer.',fields:[{id:'label',label:'Counting down to',value:'Countdown'},{id:'when',label:'Ends at',type:'datetime-local',value:localStamp(soon),min:localStamp(new Date())}],
+      act:async(v,step)=>{if(!v.label)throw new Error('Give it a name');const end=v.when?new Date(v.when):null;
+        if(!end||isNaN(end))throw new Error('Pick when it ends');if(end<=new Date())throw new Error('That time has already passed');
+        await sendAddon({file:fillIn(await storeText(url),{'{label}':v.label.replace(/["\\]/g,'').slice(0,27),'{from}':localStamp(new Date()),'{to}':localStamp(end)})},step);
+        $('admsg').textContent='Counting down to '+v.label+', '+end.toLocaleString()+'.';}});}
+  /* Everything else: no questions, but the same pop-up shows it going on. The file is read here and handed over with its address, so the bar does not have to fetch it again. */
+  ask({title:name,sub:'Put this on the bar?',ok:'Add',act:async(v,step)=>{step(10,'Reading it from the store…');let file=null;try{file=JSON.parse(await storeText(url));}catch(e){}
+    await sendAddon(file?{url,file}:{url},step);$('admsg').textContent='';}});
+};
 function renderUpdate(s){
   const u=s.update,v=(t)=>String(t).replace(/^v/,'');
   $('updtitle').textContent=u.phase==='downloading'?'Installing '+v(u.latest)+' · '+u.percent+'%':u.phase==='installed'?u.message

@@ -49,7 +49,7 @@
 
 /* What the firmware calls itself on its page and in /api/status. Plain and generic, so it says what it is on anyone's network. */
 #define FW_NAME "panda"
-#define FW_VERSION "0.7.7"
+#define FW_VERSION "0.7.9"
 /* Where new releases and the add-on store live. A release must carry a
    panda-<board>-custom-<version>.bin for each board and a SHA256SUMS.txt that lists them. */
 #define UPDATE_REPO "ImSammyTTV/Panda-State"
@@ -2546,6 +2546,7 @@ static bool faPick = false;                      // show it as soon as it loads 
 static uint8_t faKind = FA_NONE;
 static char faId[16] = "", faName[28] = "", faAuthor[40] = "";
 static String faUrl, faDesc, faError, faShow, faSrcUrl, faPath;
+static String faInline;  // a store file handed over by the page along with its address, used once instead of fetching it
 static String faBase;  // a second path: when set, the meter shows the percentage change from it to path (a share price against yesterday's close)
 static uint8_t faFrames[FA_MAX_FRAMES][LED_COUNT][3];
 static uint8_t faFrameCount = 0, faFps = 4, faFrameAt = 0;
@@ -2744,7 +2745,11 @@ static void faTick() {
         text = buf.get();
       }
     }
-    if (faUrl.length()) {
+    /* The page already downloaded the file to show it in the store, and hands it over with its address: used as it is, it loads at once instead of
+       the bar fetching it again from GitHub (11-12 s on the P2, most of it the secure connection juggling memory with the printer's). The address is
+       still kept, and the bar fetches from it at its next start. */
+    if (faUrl.length() && faInline.length()) { text = faInline; faInline = ""; }
+    else if (faUrl.length()) {
       Fetch f;
       const int code = f.begin(faUrl);
       if (code != 200) {
@@ -2951,6 +2956,12 @@ static void handleAddonFile() {
     if (!url.startsWith("https://") || url.length() > 300) return sendResult(false, "The add-on's address must start with https://");
     prefs.putString("faurl", url);
     prefs.remove("fajson");
+    faInline = "";
+    if (!doc["file"].isNull()) {
+      String text;
+      serializeJson(doc["file"], text);
+      if (text.length() <= FA_MAX_FETCH) faInline = text;  // too big: the bar fetches it itself, as before
+    }
   } else if (!doc["file"].isNull()) {
     String text;
     serializeJson(doc["file"], text);
