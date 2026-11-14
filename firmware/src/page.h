@@ -84,7 +84,8 @@ select.pill:hover{background-color:rgba(var(--ink),.17)}
 .sheet h3{margin:0 0 4px;font-size:18px;font-weight:600}.sheet .prog{margin-top:16px}.sheet .msg{min-height:18px}
 .field{display:flex;flex-direction:column;gap:6px;margin-top:14px}.field label{font-size:13px;color:var(--t2)}.field .sub{font-size:12px}
 .field input{width:100%;height:38px;border-radius:12px;border:1px solid var(--line);background:rgba(var(--ink),.06);color:var(--text);padding:0 12px;font:inherit;font-size:14px;color-scheme:var(--scheme)}
-.mbtns{justify-content:flex-end;margin-top:14px}
+.mbtns{justify-content:flex-end;margin-top:14px}.sheet .sub{line-height:1.5}
+button.go.warn{background:#ef4444;color:#fff}
 @keyframes fadein{from{opacity:0}to{opacity:1}}
 .tog{display:inline-flex;align-items:center;gap:8px;font-size:13px;color:var(--t2)}
 [hidden]{display:none!important}
@@ -186,7 +187,7 @@ select.pill:hover{background-color:rgba(var(--ink),.17)}
   <div class="line"><label class="tog"><input type="checkbox" id="updauto"> Look for a new release once a day (it is never installed without you)</label></div>
   <div class="sub" id="slots" style="margin-top:12px"></div>
   <div class="line"><input class="grow" id="bin" type="file" accept=".bin"><button id="up">Install file</button></div>
-  <div class="line"><button id="other">Start the firmware in the other slot</button><button id="backup" hidden title="A copy of the stock firmware from the other slot. Keep it: an update later writes over that slot, and Install file puts this back.">Download the stock firmware</button><button id="reboot">Restart</button><button id="factory">Reset settings</button></div>
+  <div class="line"><button id="other">Switch to the stock firmware</button><button id="backup" hidden title="Saves a copy of the stock firmware to this device. Keep it: an update later writes over where it is kept, and Install file puts it back.">Dump stock firmware</button><button id="reboot">Restart</button><button id="factory">Reset settings</button></div>
   <div class="msg" id="fwmsg"></div>
 </details>
 
@@ -275,7 +276,9 @@ function renderAddons(s){
   $('adsum').textContent=on?on.name+(s.addonShowing===on.id?' · on the bar now':''):'None picked';
 }
 $('adtiles').onclick=async(e)=>{const b=e.target.closest('button');if(!b)return;if(b.dataset.pick!==undefined)pick(b.dataset.pick);
-  if(b.dataset.remove){if(!confirm('Remove this add-on from the bar?'))return;const r=await post('/api/addonfile',{remove:true});$('admsg').textContent=r.message||'';}};
+  if(b.dataset.remove){const card=b.closest('.tile'),name=card?card.querySelector('.t span').textContent:'this add-on';
+    ask({title:'Remove '+name+'?',sub:'It comes off the bar. You can add it again from the store any time.',ok:'Remove',
+      act:async()=>{const r=await post('/api/addonfile',{remove:true});if(!r.ok)throw new Error(r.message||'The bar did not remove it');$('admsg').textContent='';}});}};
 $('adnone').onclick=()=>pick('');
 $('backup').onclick=()=>{location.href='/api/otherslot.bin';};
 $('hostsave').onclick=async()=>{busy=Date.now();const r=await post('/api/hostname',{name:$('hostname').value.trim()});$('hosthint').textContent=r.message||(r.ok?'Saved':'Not saved');};
@@ -370,7 +373,7 @@ requestAnimationFrame(simTick);
 openStore();
 /* Adding from the store. Every add-on that needs an answer (a town, a stock, a time) asks in one pop-up over the page, with proper inputs (a real date and time picker for a countdown), and the pop-up stays open with a progress bar until the bar says the add-on is running, so nothing is left wondering whether the click worked. */
 function ask(o){
-  $('mtitle').textContent=o.title;$('msub').textContent=o.sub||'';$('mmsg').textContent='';$('mprog').hidden=true;$('mok').textContent=o.ok||'Add';$('mok').disabled=false;
+  $('mtitle').textContent=o.title;$('msub').textContent=o.sub||'';$('mmsg').textContent='';$('mprog').hidden=true;$('mok').textContent=o.ok||'Add';$('mok').disabled=false;$('mok').className=o.warn?'go warn':'go';
   $('mbody').innerHTML=(o.fields||[]).map(f=>'<div class="field"><label for="mf-'+f.id+'">'+esc(f.label)+'</label><input id="mf-'+f.id+'" type="'+(f.type||'text')+'"'+(f.min?' min="'+f.min+'"':'')+' placeholder="'+esc(f.placeholder||'')+'" value="'+esc(f.value||'')+'" autocomplete="off" spellcheck="false">'+(f.hint?'<div class="sub">'+esc(f.hint)+'</div>':'')+'</div>').join('');
   $('modal').hidden=false;const first=$('mbody').querySelector('input');if(first)setTimeout(()=>first.focus(),50);
   const close=()=>{$('modal').hidden=true;$('modal').onclick=null;document.onkeydown=null;};
@@ -467,13 +470,18 @@ $('apsave').onclick=async()=>{busy=Date.now();const body={always:$('apmode').val
   const r=await post('/api/ap',body);$('apmsg').textContent=r.message||(r.ok?'Saved':'Not saved');if(r.ok)$('appass').value='';};
 $('apmode').onchange=$('apsave').onclick;
 $('updcheck').onclick=()=>post('/api/update',{check:true});
-$('updinstall').onclick=async()=>{if(!confirm('Install '+$('updinstall').textContent.replace('Install ','')+' from GitHub? It replaces the firmware in the other slot, and the bar restarts into it.'))return;const r=await post('/api/update',{install:true});if(!r.ok)$('fwmsg').textContent=r.message||'';};
+/* Firmware questions are asked in the page's own pop-up, in plain words: what happens, and how to undo it. */
+$('updinstall').onclick=()=>{const ver=$('updinstall').textContent.replace('Install ',''),stock=last&&last.otherSlot.project&&!last.otherSlot.ours;
+  ask({title:'Install '+ver+'?',sub:'The bar downloads it from GitHub, checks it, and restarts into it. This takes about a minute.'
+    +(stock?' It goes where the stock firmware is kept, so the stock firmware will no longer be on the bar. To keep a copy, press Cancel and use Dump stock firmware first.':' The version running now stays on the bar, to go back to if needed.'),
+    ok:'Install',warn:stock,act:async()=>{const r=await post('/api/update',{install:true});if(!r.ok)throw new Error(r.message||'It did not start');}});};
 $('updauto').onchange=()=>{busy=Date.now();post('/api/update',{auto:$('updauto').checked});};
 $('adwhen').onchange=()=>{busy=Date.now();post('/api/config',{addon:{when:$('adwhen').value}});};
 $('mstatus').onclick=()=>{busy=Date.now();post('/api/config',{mode:'status'});};
 $('mmusic').onclick=()=>{busy=Date.now();post('/api/config',{mode:'music'});};
 $('sens').onchange=()=>{busy=Date.now();post('/api/config',{music:{sensitivity:$('sens').value}});};
-$('factory').onclick=async()=>{if(!confirm('Clear every setting this firmware has saved (looks, mode, pairing, Wi-Fi) and restart?'))return;const r=await post('/api/factory');$('fwmsg').textContent=r.message||'';};
+$('factory').onclick=()=>ask({title:'Reset all settings?',sub:'Clears everything Panda State has saved: looks, mode, schedule, add-ons, printer pairing and Wi-Fi. The bar restarts and comes back on the Wi-Fi and printer the stock firmware had saved, if any.',
+  ok:'Reset',warn:true,act:async()=>{const r=await post('/api/factory');if(!r.ok)throw new Error(r.message||'The bar did not reset');$('fwmsg').textContent=r.message||'';}});
 function showPrType(){const k=$('prtype').value==='klipper';$('klrow').hidden=!k;$('bbrow').hidden=k;$('prhelp').textContent=k?'The address of the machine running Moonraker (Mainsail or Fluidd use the same one). Port 7125 unless you changed it.':'On the printer: Settings, then LAN Only or Network, shows the address and the access code.';}
 $('prtype').onchange=showPrType;
 let haOn=false;
@@ -485,7 +493,8 @@ $('hasave').onclick=saveHa;
 $('stripsave').onclick=async()=>{busy=Date.now();const r=await post('/api/config',{stripLength:+$('striplen').value});$('cfgmsg').textContent=r.ok?'Saved':(r.message||'Not saved');};
 $('split').onchange=()=>{busy=Date.now();post('/api/config',{split:$('split').checked});};
 $('pair').onclick=async()=>{const k=$('prtype').value==='klipper';const r=await post('/api/printer',k?{type:'klipper',host:$('klhost').value,port:+($('klport').value||7125),key:$('klkey').value}:{ip:$('prip').value,serial:$('prsn').value,code:$('prcode').value});if(r.ok)$('klkey').value='';$('prmsg').textContent=r.message||(r.ok?'Saved':'Not saved');if(r.ok)$('prcode').value='';};
-$('unpair').onclick=async()=>{if(!confirm('Unpair the bar from the printer?'))return;const r=await post('/api/printer',{forget:true});$('prmsg').textContent=r.message||'';if(r.ok){$('prip').value='';$('prsn').value='';$('klhost').value='';}};
+$('unpair').onclick=()=>ask({title:'Unpair from the printer?',sub:'The bar stops following the printer until you pair it again here.',ok:'Unpair',warn:true,
+  act:async()=>{const r=await post('/api/printer',{forget:true});if(!r.ok)throw new Error(r.message||'It did not unpair');$('prmsg').textContent=r.message||'';$('prip').value='';$('prsn').value='';$('klhost').value='';}});
 $('coolsave').onclick=async()=>{const r=await post('/api/config',{cool:{minutes:+$('cmin').value,target:+$('cbed').value}});$('prmsg').textContent=r.ok?'Saved':(r.message||'Not saved');};
 $('order').onchange=()=>post('/api/config',{order:$('order').value});
 $('rev').onchange=()=>post('/api/config',{reversed:$('rev').checked});
@@ -493,7 +502,10 @@ $('bri').oninput=()=>{$('briv').textContent=$('bri').value+'%';};
 $('bri').onchange=()=>{busy=Date.now();post('/api/config',{brightness:+$('bri').value});};
 $('wifi').onclick=async()=>{const r=await post('/api/wifi',{ssid:$('ssid').value,password:$('pass').value});$('wifimsg').textContent=r.message||(r.ok?'Saved':'Not saved');};
 $('reboot').onclick=async()=>{const r=await post('/api/reboot');$('fwmsg').textContent=r.message||'';};
-$('other').onclick=async()=>{if(!confirm('Restart the bar into the firmware in the other slot?'))return;const r=await post('/api/slot');$('fwmsg').textContent=r.message||'';};
+$('other').onclick=()=>{const stock=last&&!last.otherSlot.ours;
+  const act=async()=>{const r=await post('/api/slot');if(!r.ok)throw new Error(r.message||'The bar did not switch');$('fwmsg').textContent=r.message||'';};
+  ask(stock?{title:'Switch to the stock firmware?',sub:'The bar restarts into the original firmware it came with, which is still kept on it. Panda State stays on the bar too, with all your settings. To come back, open the stock firmware\'s page and install the Panda State file for your board through its firmware update.',ok:'Switch',act}
+    :{title:'Go back to the previous version?',sub:'The bar restarts into the Panda State version it ran before this one, which is still kept on it. You can switch again here the same way.',ok:'Go back',act});};
 $('up').onclick=()=>{
   const file=$('bin').files[0]; if(!file){$('fwmsg').textContent='Choose a .bin file first';return;}
   const form=new FormData(); form.append('firmware',file,file.name);
@@ -543,6 +555,8 @@ async function tick(){
   const o=s.otherSlot;
   $('slots').textContent='Running from '+s.slot+' ('+s.build+')'+(s.onTrial?' · on trial until it has been on Wi-Fi for 20 s':'')+'. Other slot ('+o.label+'): '+(o.project?o.project+' '+o.version+', built '+o.built:'empty')+'.';
   $('other').disabled=!o.project; $('backup').hidden=!o.project||o.ours;
+  // Named for what is there: stock after the first install, an earlier Panda State once an update has replaced it.
+  $('other').textContent=!o.project||!o.ours?'Switch to the stock firmware':'Go back to the previous version';
   /* What a closed section says about itself. */
   $('lookssum').textContent=['idle','printing','error'].map(n=>{const l=s.config.states[n];return n.charAt(0).toUpperCase()+n.slice(1)+' '+(l?l.effect:'');}).join(' · ')+' · and five more';
   const sc=s.config.schedule;
