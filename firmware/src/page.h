@@ -213,10 +213,10 @@ function build(s){
     const [,colour,colour2,effect,speed,tryIt]=row.children;
     colour.value=look.colour.toLowerCase(); colour2.value=look.colour2.toLowerCase(); speed.value=look.speed;
     for(const fx of s.effects){const o=document.createElement('option');o.value=o.textContent=fx;effect.appendChild(o);} effect.value=look.effect;
-    /* The second colour is only sent once it has been touched, so an untouched one keeps following the first. */
-    let chose2=!look.colour2Auto;
-    const save=async()=>{busy=Date.now();const one={colour:colour.value,effect:effect.value,speed:+speed.value};if(chose2)one.colour2=colour2.value;const r=await post('/api/config',{states:{[name]:one}});$('cfgmsg').textContent=r.ok?'Saved':(r.message||'Not saved');};
-    colour.onchange=save; effect.onchange=save; speed.onchange=save; colour2.onchange=()=>{chose2=true;save();};
+    /* The second colour is only sent when it is the one changed, so an untouched one keeps following the first. */
+    /* Only the control that changed is sent: a page left open would otherwise write its old colour and effect back over ones set since from somewhere else. */
+    const save=async(one)=>{busy=Date.now();const r=await post('/api/config',{states:{[name]:one}});$('cfgmsg').textContent=r.ok?'Saved':(r.message||'Not saved');};
+    colour.onchange=()=>save({colour:colour.value}); effect.onchange=()=>save({effect:effect.value}); speed.onchange=()=>save({speed:+speed.value}); colour2.onchange=()=>save({colour2:colour2.value});
     tryIt.onclick=()=>post('/api/preview',{state:name,progress:60,seconds:8});
     $('rows').appendChild(row);
   }
@@ -401,7 +401,7 @@ async function sendAddon(body,step){
     /* A live meter is on the bar once it has loaded; its first reading is waited for a little, not without end. */
     if(f.kind==='source'&&f.value===undefined){if(!loadedAt)loadedAt=Date.now();
       if(Date.now()-loadedAt<15000){step(75,f.error?f.error:'Getting its first reading…');continue;}
-      step(100,'On the bar. Its first reading is on its way.');await new Promise(res=>setTimeout(res,1200));setTimeout(openStore,300);return;}
+      step(100,f.error&&!/^Waiting/.test(f.error)?'On the bar, but its first reading failed: '+f.error:'On the bar. Its first reading is on its way.');await new Promise(res=>setTimeout(res,1200));setTimeout(openStore,300);return;}
     step(100,'On the bar');await new Promise(res=>setTimeout(res,400));setTimeout(openStore,300);return;
   }
   throw new Error('The bar is still working on it; it will appear once it has loaded');
@@ -409,6 +409,8 @@ async function sendAddon(body,step){
 async function storeText(url){const r=await fetch(url,{cache:'no-store'});if(!r.ok)throw new Error('Could not read it from the store');return r.text();}
 const fillIn=(text,fill)=>{for(const [k,v] of Object.entries(fill))text=text.split(k).join(v);return JSON.parse(text);};
 const pad2=(n)=>String(n).padStart(2,'0'),localStamp=(d)=>d.getFullYear()+'-'+pad2(d.getMonth()+1)+'-'+pad2(d.getDate())+'T'+pad2(d.getHours())+':'+pad2(d.getMinutes());
+/* The same, on a clock in the bar's time zone, which is where the bar reads a countdown's times. That need not be this browser's zone: a bar never told its zone keeps UTC, and its countdowns ended hours out (0.7.11). A zone the browser does not know by name is one of the fixed offsets this page offered, which came from the browser's own clock. */
+const barStamp=(d)=>{try{const p={};new Intl.DateTimeFormat('en-CA',{timeZone:last.config.time.zone,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).formatToParts(d).forEach(x=>{p[x.type]=x.value;});return p.year+'-'+p.month+'-'+p.day+'T'+p.hour+':'+p.minute;}catch(e){return localStamp(d);}};
 $('storelist').onclick=(e)=>{const b=e.target.closest('button');if(!b||!b.dataset.url)return;
   const url=b.dataset.url,card=b.closest('.tile'),name=card?card.querySelector('.t span').textContent:'Add-on';
   /* A place (weather, air): the town is found with Open-Meteo's free place search, and only its coordinates go to the bar. */
@@ -425,7 +427,7 @@ $('storelist').onclick=(e)=>{const b=e.target.closest('button');if(!b||!b.datase
     return ask({title:name,sub:'The bar starts full and empties as the time gets closer.',fields:[{id:'label',label:'Counting down to',value:'Countdown'},{id:'when',label:'Ends at',type:'datetime-local',value:localStamp(soon),min:localStamp(new Date())}],
       act:async(v,step)=>{if(!v.label)throw new Error('Give it a name');const end=v.when?new Date(v.when):null;
         if(!end||isNaN(end))throw new Error('Pick when it ends');if(end<=new Date())throw new Error('That time has already passed');
-        await sendAddon({file:fillIn(await storeText(url),{'{label}':v.label.replace(/["\\]/g,'').slice(0,27),'{from}':localStamp(new Date()),'{to}':localStamp(end)})},step);
+        await sendAddon({file:fillIn(await storeText(url),{'{label}':v.label.replace(/["\\]/g,'').slice(0,27),'{from}':barStamp(new Date()),'{to}':barStamp(end)})},step);
         $('admsg').textContent='Counting down to '+v.label+', '+end.toLocaleString()+'.';}});}
   /* Everything else: no questions, but the same pop-up shows it going on. The file is read here and handed over with its address, so the bar does not have to fetch it again. */
   ask({title:name,sub:'Put this on the bar?',ok:'Add',act:async(v,step)=>{step(10,'Reading it from the store…');let file=null;try{file=JSON.parse(await storeText(url));}catch(e){}
@@ -564,7 +566,7 @@ async function tick(){
   $('prsum').textContent=$('prstate').textContent;
   $('wifisum').textContent=$('wifititle').textContent+(s.ap.up?' · hotspot on':'');
   if(s.hostname){if(document.activeElement!==$('hostname')&&Date.now()-busy>3000)$('hostname').value=s.hostname;
-    const h='http://'+s.hostname+'.local';$('hosthint').innerHTML='<a href="'+h+'">'+h+'</a>'+(s.hostname!==s.hostnameDefault?' · empty and Save puts back '+s.hostnameDefault:'');}
+    const h='http://'+s.hostname+'.local';if(Date.now()-busy>5000)$('hosthint').innerHTML='<a href="'+h+'">'+h+'</a>'+(s.hostname!==s.hostnameDefault?' · empty and Save puts back '+s.hostnameDefault:'');}
   $('fwsum').textContent=$('updtitle').textContent;
   const h=s.homeAssistant;
   $('hatitle').textContent=!h.on?'Off':h.connected?'Connected to '+h.host:'Not connected'+(h.error?': '+h.error:'');
@@ -592,7 +594,10 @@ tick(); setInterval(tick,1000);
 let framing=false;
 async function frameTick(){
   if(framing||document.hidden)return; framing=true;
-  try{const hex=await fetch('/api/frame').then(r=>r.text());if(hex.length===150)[...bar.children].forEach((el,i)=>{el.style.backgroundColor='#'+hex.substr(i*6,6);});}catch(e){}
+  /* Given up on after two seconds: a bar that restarts mid-request never answers it, and the picture would stay still until the browser gave up, which can be minutes. */
+  const stop=new AbortController(),giveUp=setTimeout(()=>stop.abort(),2000);
+  try{const hex=await fetch('/api/frame',{signal:stop.signal}).then(r=>r.text());if(hex.length===150)[...bar.children].forEach((el,i)=>{el.style.backgroundColor='#'+hex.substr(i*6,6);});}catch(e){}
+  clearTimeout(giveUp);
   framing=false;
 }
 setInterval(frameTick,200);
