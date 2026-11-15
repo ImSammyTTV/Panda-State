@@ -59,6 +59,9 @@ def main():
     args = parser.parse_args()
     if len(args.command) > 4:
         sys.exit('The bar draws at most four meters.')
+    if not 1 <= args.every <= 3600:
+        # A reading lives on the bar for an hour at most, so one posted less often would be gone before the next.
+        sys.exit('--every is 1 to 3600 seconds.')
     colours = args.colour + ['#FFFFFF'] * (len(args.command) - len(args.colour))
 
     while True:
@@ -70,7 +73,7 @@ def main():
             answer = post(args.bar, {
                 'id': args.id, 'name': args.name or args.id,
                 # Long enough to ride out two missed readings, short enough that a dead script clears itself.
-                'ttl': args.every * 3,
+                'ttl': max(1, min(3600, args.every * 3)),   # the bar takes 1-3600
                 'meters': [{'value': value, 'colour': colour} for value, colour in zip(values, colours)],
             })
             where = 'on the bar now' if answer.get('picked') else "posted (pick it on the bar's page under Add-ons to see it)"

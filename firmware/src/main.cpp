@@ -49,7 +49,7 @@
 
 /* What the firmware calls itself on its page and in /api/status. Plain and generic, so it says what it is on anyone's network. */
 #define FW_NAME "panda"
-#define FW_VERSION "0.7.11"
+#define FW_VERSION "0.7.12"
 /* Where new releases and the add-on store live. A release must carry a
    panda-<board>-custom-<version>.bin for each board and a SHA256SUMS.txt that lists them. */
 #define UPDATE_REPO "ImSammyTTV/Panda-State"
@@ -130,7 +130,12 @@ static const uint8_t PIN_BUTTON = 9;   // to ground when pressed; stock reads it
 #if !defined(BOARD_RGB)
 static Adafruit_NeoPixel strip(LED_COUNT, LED_PIN, NEO_RGB + NEO_KHZ800);
 #endif
-static WebServer server(80);
+/* The library hands any POST that is not a form upload to the same upload function, with no upload behind it; this is how that function can tell (0.7.11 fell over on one). */
+struct PandaServer : WebServer {
+  using WebServer::WebServer;
+  bool uploading() const { return (bool)_currentUpload; }
+};
+static PandaServer server(80);
 static Preferences prefs;
 
 /* ------------------------------------------------------------- looks -- */
@@ -254,6 +259,7 @@ static String colourText(uint32_t colour) {
 
 /* The schedule's and the add-ons' share of the settings; they are defined further down, beside the things they describe. */
 static void extraConfigToJson(JsonDocument &doc);
+static void faZoneChanged();   // with the file add-ons, below
 static const char *applyExtraConfig(JsonVariantConst doc);
 
 static void configToJson(JsonDocument &doc) {
@@ -340,7 +346,11 @@ static const char *applyConfig(JsonVariantConst doc) {
       if (!parseColour(one["colour"].as<const char *>(), colour)) return "Colour must be #RRGGBB";
       looks[at].colour = colour;
     }
-    if (!one["colour2"].isNull()) {
+    /* An automatic second colour is stored as the colour it worked out, with colour2Auto beside it. The flag is what keeps it automatic after a restart; a colour2 that is not the first colour's partner is one somebody chose, and wins. */
+    uint32_t partner;
+    if (one["colour2Auto"].as<bool>() && (one["colour2"].isNull() || (parseColour(one["colour2"].as<const char *>(), partner) && partner == partnerOf(looks[at].colour)))) {
+      looks[at].colour2 = AUTO;
+    } else if (!one["colour2"].isNull()) {
       const char *text = one["colour2"].as<const char *>();
       uint32_t colour;
       if (text && strcasecmp(text, "auto") == 0) looks[at].colour2 = AUTO;
@@ -370,7 +380,8 @@ static const char *applyConfig(JsonVariantConst doc) {
    after the first blob save, which also gives its space back. */
 static bool cfgSaveOk = true;
 static String cfgSaved;  // what the store holds, so an unchanged save writes nothing
-static void saveConfig() {
+static SemaphoreHandle_t cfgLock;   // the page, Home Assistant and the add-on task all save: one at a time
+static void saveConfigNow() {
   JsonDocument doc;
   configToJson(doc);
   String text;
@@ -388,6 +399,11 @@ static void saveConfig() {
     cfgSaved = text;
   }
   cfgSaveOk = ok;
+}
+static void saveConfig() {
+  if (cfgLock) xSemaphoreTake(cfgLock, portMAX_DELAY);
+  saveConfigNow();
+  if (cfgLock) xSemaphoreGive(cfgLock);
 }
 
 static void loadConfig() {
@@ -481,7 +497,7 @@ static struct {
 
 /* What the printer has said about its filament, kept between messages: printers send only what changed. */
 struct FilamentTray { int16_t tray; uint32_t colour; char type[10]; };
-static FilamentTray filTrays[16];
+static FilamentTray filTrays[26];   // 16 AMS trays, 8 in AMS HT units, 2 external spools
 static uint8_t filTrayCount = 0;
 static volatile int prTrayNow = -1;          // -1 never heard
 static volatile int prActiveExt = 0;
@@ -495,7 +511,7 @@ static void filRemember(int tray, uint32_t colour, bool has, const char *type) {
       filTrays[i].colour = colour; strlcpy(filTrays[i].type, type, sizeof filTrays[i].type);
       return;
     }
-  if (!has || filTrayCount >= 16) return;
+  if (!has || filTrayCount >= sizeof filTrays / sizeof filTrays[0]) return;
   filTrays[filTrayCount].tray = tray; filTrays[filTrayCount].colour = colour;
   strlcpy(filTrays[filTrayCount].type, type, sizeof filTrays[filTrayCount].type);
   filTrayCount++;
@@ -762,13 +778,24 @@ static void printerTask(void *) {
   static uint8_t buf[512];
   static uint8_t packet[200];
   for (;;) {
+    prRestart = false;   // before the settings are read, so a change made while they are being read asks again rather than being lost
     xSemaphoreTake(prLock, portMAX_DELAY);
     String ip = prIp, serial = prSerial, code = prCode;
     const uint8_t kind = prKind;
     const uint16_t port = prPort;
     xSemaphoreGive(prLock);
-    prRestart = false;
-    if (prPaused) { prConnected = false; prSetError("Paused while a firmware update downloads"); prWait(1000); continue; }
+    /* A different printer (or none) starts from nothing: what the last one said, its trays and its nozzles are not this one's. Done here, by the only task that writes them. */
+    static String usedIp, usedSerial;
+    static uint8_t usedKind = 255;
+    static uint16_t usedPort = 0;
+    if (ip != usedIp || serial != usedSerial || kind != usedKind || port != usedPort) {
+      usedIp = ip; usedSerial = serial; usedKind = kind; usedPort = port;
+      prGcode[0] = 0; prPercent = -1; prBed = NAN; prLastMsgAt = 0;
+      filTrayCount = 0; prTrayNow = -1; prActiveExt = 0;
+      prSnow[0] = prSnow[1] = -1; prSnowSeen = false;
+    }
+    /* Acknowledged here too: the link is already down, and a download that asks for it to be let go would otherwise wait out its whole patience. */
+    if (prPaused) { prConnected = false; prHoldAck = true; prSetError("Paused while a firmware update downloads"); prWait(1000); continue; }
     if (prHold) { prConnected = false; prHoldAck = true; prSetError("Let go for a moment while an add-on downloads"); prWait(250); continue; }
     if (!ip.length() || (kind == PR_BAMBU && !serial.length())) { prConnected = false; prSetError(""); prWait(2000); continue; }
     if (WiFi.status() != WL_CONNECTED) { prConnected = false; prSetError("Waiting for Wi-Fi"); prWait(2000); continue; }
@@ -879,6 +906,7 @@ static bool readStockPairing(String &ip, String &serial, String &code) {
 
 /* What the printer link alone would have the bar show. When a print was seen to end, and the hottest the bed has been since. */
 static uint32_t finishedAt = 0;
+static uint32_t finishSeenAt = 0;   // when this bar first saw the print finished: the end itself, or its own start-up if that came later
 static float finishedHot = NAN;
 static char lastGcode[12] = "";
 
@@ -889,10 +917,12 @@ static void trackPrinter() {
   if (!printerFresh()) return;
   const bool wasBusy = !strcmp(lastGcode, "RUNNING") || !strcmp(lastGcode, "PAUSE") || !strcmp(lastGcode, "PREPARE");
   if (gcodeIs("FINISH")) {
+    if (!finishSeenAt) finishSeenAt = millis() | 1;
     if (wasBusy) { finishedAt = millis() | 1; finishedHot = prBed; }
     if (!isnan(prBed) && (isnan(finishedHot) || prBed > finishedHot)) finishedHot = prBed;
   } else {
     finishedAt = 0;
+    finishSeenAt = 0;
     finishedHot = NAN;
   }
   strlcpy(lastGcode, prGcode, sizeof lastGcode);
@@ -914,7 +944,8 @@ static State printerState(float &fill) {
   const float left = max(timeLeft, bedLeft);
   if (left > 0) { fill = left * 100; return ST_COOLING; }
   /* Nothing reports the part being taken off, so "ready" is not held for ever. */
-  if (finishedAt && millis() - finishedAt > 2UL * 3600000UL) return ST_IDLE;
+  const uint32_t since = finishedAt ? finishedAt : finishSeenAt;
+  if (since && millis() - since > 2UL * 3600000UL) return ST_IDLE;
   return ST_READY;
 }
 
@@ -1187,10 +1218,12 @@ static const char *applyExtraConfig(JsonVariantConst doc) {
   if (!doc["time"]["tz"].isNull()) {
     const char *tz = doc["time"]["tz"].as<const char *>();
     if (!tz || !*tz || strlen(tz) >= sizeof timeTz) return "The time zone rule is 1-47 characters";
+    const bool changed = strcmp(timeTz, tz) != 0;   // the page sends the zone along with every change to the schedule
     strlcpy(timeTz, tz, sizeof timeTz);
     const char *zone = doc["time"]["zone"].as<const char *>();
     strlcpy(timeZone, zone && *zone ? zone : tz, sizeof timeZone);
     applyTimeZone();
+    if (changed) faZoneChanged();
   }
   if (!doc["addon"]["show"].isNull()) {
     const char *id = doc["addon"]["show"].as<const char *>();
@@ -1429,7 +1462,7 @@ static void outShow() {
 static void renderProgress() {
   const float lit = barProgress / 100.0f * LED_COUNT;
   const float level = max((schedActive() ? schedLevel : brightness) / 100.0f, 0.5f);
-  const float head = fmodf(millis() / 1000.0f * 10.0f, LED_COUNT + 6.0f) - 3.0f;
+  const float head = (millis() % ((LED_COUNT + 6) * 100UL)) / 100.0f - 3.0f;   // ten LEDs a second; the remainder is taken in whole milliseconds, which a float of the uptime cannot hold after a few days
   for (int i = 0; i < LED_COUNT; i++) {
     float v = lit - i >= 1 ? 0.75f : lit - i > 0 ? max(lit - i, 0.2f) * 0.75f : 0.12f;
     if (i < lit) v += 0.25f * max(0.0f, 1 - fabsf(i - head) / 3.0f);
@@ -1459,7 +1492,8 @@ static void render() {
   if (manual) fill = 100;
   const bool dark = state == ST_OFF && !addon && !manual;
   const float fillTo = fill / 100.0f * LED_COUNT;
-  const float t = millis() / 1000.0f;
+  /* Seconds, starting again every 10,000 of them. A float of the whole uptime runs out of digits: the effects went jerky after a couple of weeks and the error flash stopped after 39 days (0.7.11). At 10,000 s every speed on the page has done a whole number of breathe, flash, chase and rainbow cycles, so nothing jumps there. */
+  const float t = (millis() % 10000000UL) / 1000.0f;
   /* 1-100 on the page is 0.1 to 2 cycles a second. */
   const float rate = 0.1f + look.speed / 100.0f * 1.9f;
   const float level = (schedActive() ? schedLevel : brightness) / 100.0f;
@@ -1600,8 +1634,8 @@ static void stopAp() {
 
 static void startWifi() {
   WiFi.persistent(false);   // our settings live in our own namespace, not the driver's
+  WiFi.setHostname(STOCK_HOST);   // the name stock used, so the router sees the same device. Before mode(): the name is only taken up when the mode changes
   WiFi.mode(WIFI_STA);
-  WiFi.setHostname("PandaStatusP2");   // the name stock used, so the router sees the same device
   WiFi.setAutoReconnect(true);
   loadAp();
   wifiSsid = prefs.getString("ssid", "");
@@ -2097,8 +2131,16 @@ static void handleWifi() {
   const char *pass = doc["password"].as<const char *>();
   if (!ssid || !*ssid || strlen(ssid) > 32) return sendResult(false, "Network name is 1-32 characters");
   if (pass && strlen(pass) > 63) return sendResult(false, "Password is at most 63 characters");
+  const bool had = prefs.isKey("ssid");
+  const String oldSsid = prefs.getString("ssid", ""), oldPass = prefs.getString("pass", "");
   prefs.putString("ssid", ssid);
   prefs.putString("pass", pass ? pass : "");
+  /* Read back rather than trusting the write: a full settings store refuses it without a word, and half of a new network (its name with the old password) would leave the bar on neither. What was there is put back. */
+  if (prefs.getString("ssid", "") != ssid || prefs.getString("pass", "") != (pass ? pass : "")) {
+    if (had) { prefs.putString("ssid", oldSsid); prefs.putString("pass", oldPass); }
+    else { prefs.remove("ssid"); prefs.remove("pass"); }
+    return sendResult(false, "The bar could not save that: its settings store is full. Removing an add-on file makes room.");
+  }
   sendResult(true, "Saved. Restarting to join it.");
   delay(500);
   ESP.restart();
@@ -2197,6 +2239,7 @@ static void handlePrinter() {
   prKind = klipper ? PR_KLIPPER : PR_BAMBU; prPort = port;
   xSemaphoreGive(prLock);
   prGcode[0] = 0; prPercent = -1; prBed = NAN; prLastMsgAt = 0; prConnected = false;
+  lastGcode[0] = 0; finishedAt = 0; finishSeenAt = 0; finishedHot = NAN;   // the last printer's print is not this one's
   prRestart = true;
   sendResult(true, !ip.length() ? "Unpaired." : klipper ? "Saved. Asking Klipper." : "Saved. Connecting to the printer.");
 }
@@ -2233,6 +2276,8 @@ static void handleSlot() {
   const esp_partition_t *part;
   esp_app_desc_t desc;
   if (!otherSlot(part, desc)) return sendResult(false, "There is no firmware in the other slot");
+  /* Checked in full before promising anything: a slot left half-written by a failed update still has a readable header. */
+  if (esp_ota_set_boot_partition(part) != ESP_OK) return sendResult(false, "The firmware in the other slot does not check out, so the bar stays on this one");
   sendResult(true, "Restarting into the other slot");
   delay(500);
   bootOtherSlot();
@@ -2240,7 +2285,10 @@ static void handleSlot() {
 
 /* Forget everything this firmware has saved (looks, mode, pairing, Wi-Fi) and start again. Stock's own settings are a separate namespace and are not touched, so the bar comes back on the Wi-Fi and pairing stock had. */
 static void handleFactory() {
+  /* The note that this build has proved itself is not a setting. Without it the restart is a trial again, and a bar reset because its Wi-Fi changed would wait two minutes with no setup network and then hand itself to the other slot. */
+  const String proven = prefs.getString("okbuild", "");
   prefs.clear();
+  if (proven.length()) prefs.putString("okbuild", proven);
   sendResult(true, "Settings cleared. Restarting.");
   delay(500);
   ESP.restart();
@@ -2252,29 +2300,35 @@ static void handleReboot() {
   ESP.restart();
 }
 
+static bool uploadOk = false;   // this upload began an update and nothing has gone wrong with it
 static void handleUpdateDone() {
-  if (Update.hasError()) return sendResult(false, Update.errorString());
+  const bool ok = uploadOk;
+  uploadOk = false;
+  if (!ok) return sendResult(false, Update.hasError() ? Update.errorString() : "No firmware file arrived, or another update is already running");
   sendResult(true, "Installed. Restarting into it.");
   delay(800);
   ESP.restart();
 }
 
 static void handleUpdateChunk() {
+  if (!server.uploading()) return;   // a POST without a form around the file comes here with no upload behind it
   HTTPUpload &upload = server.upload();
   /* The whole upload arrives inside this one handler, so the loop that draws the LEDs does not run meanwhile: the progress is drawn from here. The request's size includes the form around the file, close enough for a progress bar. */
   static uint32_t drawnAt = 0;
   const size_t whole = server.clientContentLength();
   if (upload.status == UPLOAD_FILE_START) {
-    barProgress = 0;
-    Update.begin(UPDATE_SIZE_UNKNOWN);
+    /* Refused, without an error of its own, while an update from GitHub is being written: there is one updater and it is busy. */
+    uploadOk = Update.begin(UPDATE_SIZE_UNKNOWN);
+    barProgress = uploadOk ? 0 : -1;
   } else if (upload.status == UPLOAD_FILE_WRITE) {
-    if (!Update.hasError()) Update.write(upload.buf, upload.currentSize);
-    if (whole) barProgress = (int8_t)min<uint64_t>(99, (uint64_t)upload.totalSize * 100 / whole);
+    if (uploadOk && !Update.hasError()) Update.write(upload.buf, upload.currentSize);
+    if (uploadOk && whole) barProgress = (int8_t)min<uint64_t>(99, (uint64_t)upload.totalSize * 100 / whole);
   } else if (upload.status == UPLOAD_FILE_END) {
-    Update.end(true);
-    barProgress = Update.hasError() ? -1 : 100;
+    uploadOk = uploadOk && Update.end(true);
+    barProgress = uploadOk ? 100 : -1;
   } else if (upload.status == UPLOAD_FILE_ABORTED) {
-    Update.abort();
+    if (uploadOk) Update.abort();   // only an update this upload began: the one from GitHub is not ours to stop
+    uploadOk = false;
     barProgress = -1;
   }
   if (barProgress >= 0 && millis() - drawnAt > 150) { drawnAt = millis(); renderProgress(); }
@@ -2560,6 +2614,13 @@ static uint32_t faColour = 0xFFFFFF, faEveryMs = 300000, faFetchedAt = 0, faPush
 static uint32_t faRetryAt = 0;                   // a failed fetch of a store add-on waits until then
 static uint8_t faFails = 0;                      // failed fetches in a row; the first is retried quietly
 
+/* A countdown's two times are local ones, turned into moments when the file loads. A new time zone makes them different moments, so it loads again. */
+static void faZoneChanged() {
+  if (faKind != FA_COUNTDOWN) return;
+  faReload = true;
+  faRetryAt = millis();
+}
+
 static bool hexPixels(const char *hex, uint8_t out[LED_COUNT][3]) {
   if (!hex || strlen(hex) != LED_COUNT * 6) return false;
   for (int i = 0; i < LED_COUNT; i++) {
@@ -2734,12 +2795,12 @@ static void faRemove() {
 /* One step of the file add-on: load it if needed, then keep it on the bar. */
 static void faTick() {
   if (faReload) {
+    faReload = false;   // before the address is read, so one stored meanwhile sets it again; put back below while this one still has to wait
     const String url = prefs.getString("faurl", "");
     /* Nothing is taken down until the new one can actually be fetched. */
-    if (url.length() && WiFi.status() != WL_CONNECTED) { faError = "Waiting for Wi-Fi to fetch it"; return; }
+    if (url.length() && WiFi.status() != WL_CONNECTED) { faReload = true; faError = "Waiting for Wi-Fi to fetch it"; return; }
     /* A certificate is checked against today's date, which the bar only has once it has asked the internet: before that every HTTPS fetch fails with a certificate error (seen right after each restart, 0.6.3). */
-    if (url.length() && !timeKnown()) { faError = ""; return; }
-    faReload = false;
+    if (url.length() && !timeKnown()) { faReload = true; faError = ""; return; }
     faRemove();
     faUrl = url;
     String text;
@@ -2868,11 +2929,12 @@ static void faTick() {
       float value;
       if (faFetchValue(value)) { faValue = value; faFetchedAt = now; faError = ""; }
     }
-    if (!isnan(faValue) && now - faPushedAt > 15000) {
+    /* Shown for as long as the reading is at most three fetches old (two minutes at least), by pushing it again every 15 s for that long. The slot's own lifetime cannot say this: it stops at an hour, and a meter read every half hour asked for an hour and a half and was refused every time (Air quality never appeared, 0.7.11). */
+    if (!isnan(faValue) && now - faPushedAt > 15000 && now - faFetchedAt < max<uint32_t>(120000, faEveryMs * 3)) {
       JsonDocument show;
       show["id"] = faId;
       show["name"] = faName;
-      show["ttl"] = max<uint32_t>(120, faEveryMs / 1000 * 3);
+      show["ttl"] = 120;
       JsonObject meter = show["meters"].to<JsonArray>().add<JsonObject>();
       meter["value"] = constrain((faValue - faMin) / (faMax - faMin) * 100.0f, 0.0f, 100.0f);
       char colour[8];
@@ -2886,20 +2948,32 @@ static void faTick() {
 
 static void onlineTask(void *) {
   uint32_t onlineSince = 0;
+  uint32_t wantSince = 0;      // when the page's request for a check or an install was first seen
+  uint32_t dailyTriedAt = 0;   // when the daily look was last tried, answered or not
   for (;;) {
     const bool online = WiFi.status() == WL_CONNECTED;
     if (!online) onlineSince = 0;
     else if (!onlineSince) onlineSince = millis();
 
-    /* A request made before the clock is set waits for it (a few seconds after Wi-Fi), rather than failing on the certificate. */
-    if (updWant && online && !timeKnown()) { vTaskDelay(pdMS_TO_TICKS(250)); continue; }
-    if (updWant == 1) { updWant = 0; if (online) updCheck(); else { updMessage = "Not on Wi-Fi"; updPhase = UPD_FAILED; } }
-    if (updWant == 2) { updWant = 0; if (online) updInstall(); else { updMessage = "Not on Wi-Fi"; updPhase = UPD_FAILED; } }
+    /* A request made before the clock is set waits for it (a few seconds after Wi-Fi), rather than failing on the certificate. Not without end: where the time cannot be had at all it says so after half a minute, and the add-ons below are kept going meanwhile. */
+    if (!updWant) wantSince = 0;
+    else if (!wantSince) wantSince = millis() | 1;
+    const bool waitingForClock = updWant && online && !timeKnown();
+    if (waitingForClock && millis() - wantSince > 30000) {
+      updWant = 0;
+      updMessage = "The bar has not been able to get the time, which it needs before it can trust GitHub's answer";
+      updPhase = UPD_FAILED;
+    }
+    if (!waitingForClock) {
+      if (updWant == 1) { updWant = 0; if (online) updCheck(); else { updMessage = "Not on Wi-Fi"; updPhase = UPD_FAILED; } }
+      if (updWant == 2) { updWant = 0; if (online) updInstall(); else { updMessage = "Not on Wi-Fi"; updPhase = UPD_FAILED; } }
+    }
     /* Once a day, a couple of minutes after joining Wi-Fi: only to say on the page that there is one. */
     if (updAuto && online && timeKnown() && onlineSince && millis() - onlineSince > 120000 && updPhase != UPD_DOWNLOADING
-        && (!updCheckedAt || millis() - updCheckedAt > 86400000UL) && millis() - updCheckedAt > 600000UL) {
+        && (!updCheckedAt || millis() - updCheckedAt > 86400000UL) && (!dailyTriedAt || millis() - dailyTriedAt > 3600000UL)) {
+      /* When it was tried, kept apart from when GitHub last answered: a look that fails is tried again in an hour. With only the answer's time to go by, one failed look after a good one was repeated on every pass, each of them dropping the printer link to make room (0.7.11). */
+      dailyTriedAt = millis() | 1;
       updCheck();
-      if (!updCheckedAt) updCheckedAt = millis();   // a failed daily look waits its turn rather than retrying every pass
     }
     if (!faReload || (int32_t)(millis() - faRetryAt) >= 0) faTick();
     vTaskDelay(pdMS_TO_TICKS(faKind == FA_FRAMES ? 20 : 250));
@@ -3032,6 +3106,8 @@ static void haLoad() {
   haUser = prefs.getString("hauser", "");
   haPass = prefs.getString("hapass", "");
   haPrefix = prefs.getString("haprefix", "homeassistant");
+  while (haPrefix.endsWith("/")) haPrefix.remove(haPrefix.length() - 1);   // one saved before the page took them off
+  if (!haPrefix.length()) haPrefix = "homeassistant";
   char id[20];
   snprintf(id, sizeof id, "panda_%06x", (uint32_t)(ESP.getEfuseMac() >> 24) & 0xFFFFFF);
   haId = id;
@@ -3209,7 +3285,7 @@ static void haTask(void *) {
     if (!mq.connected()) haLivePrefix = haPrefix;
     xSemaphoreGive(haLock);
     if (!on || !host.length()) { haConnected = false; haError[0] = 0; haWait(1000); continue; }
-    if (prPaused) { if (mq.connected()) mq.disconnect(); haConnected = false; strlcpy(haError, "Paused while a firmware update downloads", sizeof haError); haWait(1000); continue; }
+    if (prPaused) { if (mq.connected()) { mq.publish((haBase + "/status").c_str(), "offline", true); mq.disconnect(); } haConnected = false; strlcpy(haError, "Paused while a firmware update downloads", sizeof haError); haWait(1000); continue; }
     if (WiFi.status() != WL_CONNECTED) { haConnected = false; strlcpy(haError, "Waiting for Wi-Fi", sizeof haError); haWait(2000); continue; }
 
     if (!mq.connected()) {
@@ -3258,8 +3334,8 @@ static void haTask(void *) {
 static bool haStarted = false;
 static void haStart() {
   if (haStarted) return;
-  haStarted = true;
-  xTaskCreate(haTask, "ha", 6144, nullptr, 1, nullptr);
+  haStarted = xTaskCreate(haTask, "ha", 6144, nullptr, 1, nullptr) == pdPASS;
+  if (!haStarted) strlcpy(haError, "No memory to start it; save again or restart", sizeof haError);
 }
 
 static void haToJson(JsonDocument &doc) {
@@ -3289,7 +3365,11 @@ static void handleHa() {
   if (!doc["host"].isNull()) { host = doc["host"] | ""; host.trim(); }
   if (!doc["user"].isNull()) { user = doc["user"] | ""; user.trim(); }
   if (!doc["password"].isNull()) pass = doc["password"] | "";
-  if (!doc["prefix"].isNull()) { prefix = doc["prefix"] | ""; prefix.trim(); }
+  if (!doc["prefix"].isNull()) {
+    prefix = doc["prefix"] | "";
+    prefix.trim();
+    while (prefix.endsWith("/")) prefix.remove(prefix.length() - 1);   // "homeassistant/" would put an empty level in every topic, which Home Assistant ignores
+  }
   if (!doc["port"].isNull()) {
     const int p = doc["port"].as<int>();
     if (p < 1 || p > 65535) return sendResult(false, "The port is 1-65535");
@@ -3299,7 +3379,7 @@ static void handleHa() {
     return sendResult(false, "Give the broker's address, e.g. 192.168.1.10 or homeassistant.local, without mqtt:// or a port");
   if (on && !host.length()) return sendResult(false, "Give the broker's address first");
   if (user.length() > 64 || pass.length() > 64) return sendResult(false, "User name and password are up to 64 characters");
-  if (!prefix.length() || prefix.length() > 40 || prefix.indexOf('#') >= 0 || prefix.indexOf('+') >= 0) return sendResult(false, "The discovery prefix is usually homeassistant");
+  if (!prefix.length() || prefix.length() > 40 || prefix.indexOf('#') >= 0 || prefix.indexOf('+') >= 0 || prefix.startsWith("/") || prefix.indexOf("//") >= 0) return sendResult(false, "The discovery prefix is usually homeassistant");
   prefs.putBool("haon", on);
   prefs.putString("hahost", host);
   prefs.putUShort("haport", port);
@@ -3328,6 +3408,7 @@ void setup() {
 
   prLock = xSemaphoreCreateMutex();
   addonLock = xSemaphoreCreateMutex();
+  cfgLock = xSemaphoreCreateMutex();
   updAuto = prefs.getBool("updauto", true);
   if (prefs.isKey("filcol")) { filLast.tray = -2; filLast.colour = prefs.getUInt("filcol", 0); strlcpy(filLast.type, prefs.getString("filtype", "").c_str(), sizeof filLast.type); }
   if (prefs.getBool("pset", false)) {
@@ -3343,10 +3424,14 @@ void setup() {
   xTaskCreate(printerTask, "printer", 12288, nullptr, 1, nullptr);
   /* The microphone runs all the time, not only in Music mode: it is a few percent of the processor, and the page can then show the level for setting the sensitivity. */
 #if defined(BOARD_P2)
-  if (prefs.getString("audiotry", "") == BUILD_ID) {
+  /* An attempt that never got as far as running only counts against the microphone if the chip then fell over. The note alone could not tell that from a restart in the first 15 s, so a plug pulled and put back, or new Wi-Fi details saved straight away, left the microphone off until the next build (0.7.11). */
+  const esp_reset_reason_t why = esp_reset_reason();
+  const bool fellOver = why == ESP_RST_PANIC || why == ESP_RST_INT_WDT || why == ESP_RST_TASK_WDT || why == ESP_RST_WDT || why == ESP_RST_BROWNOUT;
+  const bool tried = prefs.getString("audiotry", "") == BUILD_ID;
+  if (tried && fellOver) {
     audioBlocked = true;
   } else {
-    prefs.putString("audiotry", BUILD_ID);
+    if (!tried) prefs.putString("audiotry", BUILD_ID);
     xTaskCreate(audioTask, "audio", 6144, nullptr, 1, nullptr);
   }
 #endif
