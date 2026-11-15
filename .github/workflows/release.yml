@@ -1,0 +1,67 @@
+name: Publish release
+
+# Publishes the images already committed in releases/ as a GitHub release,
+# which is where a bar's own updater looks for a new version.
+# Run by hand: Actions, Publish release, Run workflow. It builds nothing: the
+# files that go out are the ones in the repository, checked against
+# SHA256SUMS.txt and the version in the source first.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish, as in the file names (e.g. 0.7.12)"
+        required: true
+        type: string
+      commit:
+        description: "Commit to publish and tag (default: the head of the branch this is run from)"
+        required: false
+        type: string
+      notes:
+        description: "Release notes, in Markdown"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.commit || github.sha }}
+
+      - name: Check the images
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Not a version: $VERSION"; exit 1; }
+          grep -q "^#define FW_VERSION \"$VERSION\"" firmware/src/main.cpp || { echo "The source is not version $VERSION"; exit 1; }
+          cd releases
+          for board in p2 status lux rgb; do
+            test -f "panda-$board-custom-$VERSION.bin" || { echo "Missing panda-$board-custom-$VERSION.bin"; exit 1; }
+            grep -q "  panda-$board-custom-$VERSION.bin\$" SHA256SUMS.txt || { echo "No checksum listed for the $board image"; exit 1; }
+          done
+          sha256sum -c SHA256SUMS.txt
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+          NOTES: ${{ inputs.notes }}
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$NOTES" > "$RUNNER_TEMP/notes.md"
+          gh release create "v$VERSION" \
+            --target "$(git rev-parse HEAD)" \
+            --title "Panda State $VERSION" \
+            --notes-file "$RUNNER_TEMP/notes.md" \
+            --latest \
+            "releases/panda-p2-custom-$VERSION.bin" \
+            "releases/panda-status-custom-$VERSION.bin" \
+            "releases/panda-lux-custom-$VERSION.bin" \
+            "releases/panda-rgb-custom-$VERSION.bin" \
+            releases/SHA256SUMS.txt
