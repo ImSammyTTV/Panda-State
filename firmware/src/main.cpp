@@ -1649,7 +1649,11 @@ static void startWifi() {
 
 static bool onTrial = false;
 static const uint32_t TRIAL_GIVE_UP_MS = 120000;
+static const uint32_t TRIAL_SETUP_MS = 600000;   // with no network to join there is nothing to prove until someone gives it one: the setup network is offered for this long first
 static const uint32_t TRIAL_PROVEN_MS = 20000;
+static uint32_t trialFrom = 0;                    // the wait for Wi-Fi is counted from here: the start, or the moment new Wi-Fi details were given
+static uint32_t trialAllow = TRIAL_GIVE_UP_MS;    // and lasts this long
+static const char TRIAL_NO_UPDATE[] = "This version is still on trial, and the other slot is its way back, so nothing is written there yet. Try again once it has been on Wi-Fi for 20 seconds.";
 static const uint32_t AP_AFTER_MS = 60000;
 
 static bool otherSlot(const esp_partition_t *&part, esp_app_desc_t &desc) {
@@ -1672,6 +1676,21 @@ static void bootOtherSlot() {
 /* The Arduino core would otherwise mark every new image good before setup() runs, which is exactly the decision this firmware wants to make itself. */
 extern "C" bool verifyRollbackLater() { return true; }
 
+/* Whether the boot record already has this image down as good. It is written there when a build proves itself, and a newly installed or switched-to image never starts with it, so it says the same as the "okbuild" note without needing room in the settings store: with that store full the note was never written, and every start was a trial (0.7.12). */
+static bool imageMarkedGood() {
+  const esp_partition_t *running = esp_ota_get_running_partition();
+  esp_ota_img_states_t state;
+  return running && esp_ota_get_state_partition(running, &state) == ESP_OK && state == ESP_OTA_IMG_VALID;
+}
+
+/* The trial is failed: hand the bar to the other slot. Returns only if there is nothing there to go back to (flashed by USB), and then this build carries on as it is. */
+static void failTrial() {
+  /* The bootloader's own rollback first, if stock's bootloader has it; our own switch of slots if it does not. */
+  esp_ota_mark_app_invalid_rollback_and_reboot();
+  bootOtherSlot();
+  onTrial = false;
+}
+
 static void watchTrial() {
   const bool connected = WiFi.status() == WL_CONNECTED;
   /* When the network was last lost (or boot, if it has never been up). Kept apart from lastTryAt, which moves on every retry. */
@@ -1685,11 +1704,11 @@ static void watchTrial() {
       esp_ota_mark_app_valid_cancel_rollback();
       prefs.putString("okbuild", BUILD_ID);
       onTrial = false;
-    } else if (!connectedSince && millis() > TRIAL_GIVE_UP_MS) {
-      /* The bootloader's own rollback first, if stock's bootloader has it; our own switch of slots if it does not. */
-      esp_ota_mark_app_invalid_rollback_and_reboot();
-      bootOtherSlot();
-      onTrial = false;   // nothing to go back to (flashed by USB): carry on and offer the setup network
+    } else if (!connectedSince && millis() - trialFrom > trialAllow) {
+      failTrial();   // if it comes back there is nothing to go back to: carry on and offer the setup network
+    } else if (!apUp && !wifiSsid.length()) {
+      /* No network name from this firmware or from stock, so there is nothing to join and no other way to be given one: the setup network comes up now rather than after the trial has already been lost (0.7.12). */
+      startAp();
     }
     return;
   }
@@ -2141,6 +2160,18 @@ static void handleWifi() {
     else { prefs.remove("ssid"); prefs.remove("pass"); }
     return sendResult(false, "The bar could not save that: its settings store is full. Removing an add-on file makes room.");
   }
+  if (onTrial) {
+    /* On trial a restart may be the end of it: a bootloader that rolls back takes a second start of an unproven image as its failure. So the network is joined as the bar stands, and the wait for it starts again from here. */
+    wifiSsid = ssid;
+    wifiPass = pass ? pass : "";
+    trialFrom = millis();
+    trialAllow = TRIAL_GIVE_UP_MS;
+    sendResult(true, "Saved. Joining it now, without a restart, because this version is still on trial.");
+    delay(300);   // the answer leaves before the radio moves to the new network's channel
+    WiFi.begin(wifiSsid.c_str(), wifiPass.c_str());
+    lastTryAt = millis();
+    return;
+  }
   sendResult(true, "Saved. Restarting to join it.");
   delay(500);
   ESP.restart();
@@ -2301,9 +2332,11 @@ static void handleReboot() {
 }
 
 static bool uploadOk = false;   // this upload began an update and nothing has gone wrong with it
+static bool uploadOnTrial = false;   // it was turned away because the running build has not proved itself yet
 static void handleUpdateDone() {
   const bool ok = uploadOk;
   uploadOk = false;
+  if (!ok && uploadOnTrial) { uploadOnTrial = false; return sendResult(false, TRIAL_NO_UPDATE); }
   if (!ok) return sendResult(false, Update.hasError() ? Update.errorString() : "No firmware file arrived, or another update is already running");
   sendResult(true, "Installed. Restarting into it.");
   delay(800);
@@ -2318,7 +2351,9 @@ static void handleUpdateChunk() {
   const size_t whole = server.clientContentLength();
   if (upload.status == UPLOAD_FILE_START) {
     /* Refused, without an error of its own, while an update from GitHub is being written: there is one updater and it is busy. */
-    uploadOk = Update.begin(UPDATE_SIZE_UNKNOWN);
+    /* Not while this build is on trial either: the other slot holds the last firmware known to work, and it is where a failed trial goes back to. */
+    uploadOnTrial = onTrial;
+    uploadOk = !onTrial && Update.begin(UPDATE_SIZE_UNKNOWN);
     barProgress = uploadOk ? 0 : -1;
   } else if (upload.status == UPLOAD_FILE_WRITE) {
     if (uploadOk && !Update.hasError()) Update.write(upload.buf, upload.currentSize);
@@ -3016,6 +3051,7 @@ static void handleUpdateApi() {
   if (doc["check"].as<bool>()) updWant = 1;
   if (doc["install"].as<bool>()) {
     if (updPhase == UPD_DOWNLOADING) return sendResult(false, "Already installing");
+    if (onTrial) return sendResult(false, TRIAL_NO_UPDATE);
     updWant = 2;
   }
   sendResult(true);
@@ -3402,8 +3438,17 @@ void setup() {
   loadConfig();
   outBegin();
 
-  onTrial = prefs.getString("okbuild", "") != BUILD_ID;
+  const bool markedGood = imageMarkedGood();
+  onTrial = !markedGood && prefs.getString("okbuild", "") != BUILD_ID;
+  /* A build that proved itself before but is not down as good in the boot record (it was switched back to) is put down again: a bootloader that rolls back would otherwise drop it at its next start. */
+  if (!onTrial && !markedGood) esp_ota_mark_app_valid_cancel_rollback();
+  if (onTrial) {
+    /* A build on trial that has just fallen over has failed it. Waiting out the two minutes again would be a loop wherever the fault comes sooner than that, with only the bootloader's rollback to break it, and whether stock's bootloader has one is not known. */
+    const esp_reset_reason_t why = esp_reset_reason();
+    if (why == ESP_RST_PANIC || why == ESP_RST_INT_WDT || why == ESP_RST_TASK_WDT || why == ESP_RST_WDT) failTrial();
+  }
   startWifi();
+  if (onTrial && !wifiSsid.length()) trialAllow = TRIAL_SETUP_MS;
   applyTimeZone();
 
   prLock = xSemaphoreCreateMutex();
