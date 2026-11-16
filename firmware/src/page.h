@@ -187,7 +187,7 @@ button.go.warn{background:#ef4444;color:#fff}
   <div class="line"><label class="tog"><input type="checkbox" id="updauto"> Look for a new release once a day (it is never installed without you)</label></div>
   <div class="sub" id="slots" style="margin-top:12px"></div>
   <div class="line"><input class="grow" id="bin" type="file" accept=".bin"><button id="up">Install file</button></div>
-  <div class="line"><button id="other">Switch to the stock firmware</button><button id="backup" hidden title="Saves a copy of the stock firmware to this device. Keep it: an update later writes over where it is kept, and Install file puts it back.">Dump stock firmware</button><button id="reboot">Restart</button><button id="factory">Reset settings</button></div>
+  <div class="line"><button id="other">Switch to the stock firmware</button><button id="backup" title="Saves a copy of the stock firmware to this device. Keep it: an update later writes over where it is kept, and Install file puts it back.">Dump stock firmware</button><button id="reboot">Restart</button><button id="factory">Reset settings</button></div>
   <div class="msg" id="fwmsg"></div>
 </details>
 
@@ -556,9 +556,15 @@ async function tick(){
   if(Date.now()-busy>3000){$('bri').value=s.config.brightness;} $('briv').textContent=$('bri').value+'%';
   const o=s.otherSlot;
   $('slots').textContent='Running from '+s.slot+' ('+s.build+')'+(s.onTrial?' · on trial until it has been on Wi-Fi for 20 s':'')+'. Other slot ('+o.label+'): '+(o.project?o.project+' '+o.version+', built '+o.built:'empty')+'.';
-  $('other').disabled=!o.project; $('backup').hidden=!o.project||o.ours;
+  $('other').disabled=!o.project; $('backup').disabled=!o.project;
+  // A build on trial takes no new firmware: the other slot is its way back. Said on the buttons, rather than after a whole file has been sent.
+  const waitTrial=s.onTrial?'This version is still on trial. It takes new firmware once it has been on Wi-Fi for 20 seconds.':'';
+  $('up').disabled=s.onTrial; $('up').title=waitTrial; $('updinstall').disabled=s.onTrial; $('updinstall').title=waitTrial;
   // Named for what is there: stock after the first install, an earlier Panda State once an update has replaced it.
   $('other').textContent=!o.project||!o.ours?'Switch to the stock firmware':'Go back to the previous version';
+  // The dump button is always there, and says which firmware it would save: it copies whatever the other slot holds.
+  $('backup').textContent=o.project&&o.ours?'Dump previous version':'Dump stock firmware';
+  $('backup').title=!o.project?'There is no firmware in the other slot to copy.':o.ours?'Saves a copy of the firmware in the other slot to this device. That is the Panda State that ran before this one: the stock firmware is no longer on the bar.':'Saves a copy of the stock firmware to this device. Keep it: an update later writes over where it is kept, and Install file puts it back.';
   /* What a closed section says about itself. */
   $('lookssum').textContent=['idle','printing','error'].map(n=>{const l=s.config.states[n];return n.charAt(0).toUpperCase()+n.slice(1)+' '+(l?l.effect:'');}).join(' · ')+' · and five more';
   const sc=s.config.schedule;

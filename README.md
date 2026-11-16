@@ -257,7 +257,10 @@ way: the copy can be put back any time.
 
 - **Two slots.** An update always goes into the slot that is not running.
 - **Trial period.** A new build that is not on Wi-Fi within 2 minutes hands the
-  bar back to the other slot by itself.
+  bar back to the other slot by itself, and so does one that crashes before
+  then. With no Wi-Fi details to go on it starts its hotspot at once and waits
+  10 minutes for them. Until a build has passed, nothing can be installed over
+  the other slot.
 - **Microphone guard.** If starting the microphone ever brings the chip down,
   the next start leaves it off, so the bar stays reachable.
 - **Hotspot.** After a minute without Wi-Fi (or a 5 s button hold) the bar
@@ -282,7 +285,9 @@ stock your own bar already has:
   long as you update through stock (see *Keeping stock* above). Press **Switch
   to the stock firmware** on this firmware's page.
 - **Save a copy of it** with **Dump stock firmware** in the Firmware section
-  (0.7.5 and later), ideally right after the first install.
+  (0.7.5 and later), ideally right after the first install. The button is
+  always there (0.7.13 and later) and is named for what it would save: once an
+  update has written over stock it reads **Dump previous version**.
   It is the stock firmware image only, with no Wi-Fi password or printer code
   in it. If an update has since written over stock's slot, put the copy back
   with **Install file**, which writes it into the other slot.
