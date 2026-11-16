@@ -1677,10 +1677,17 @@ static void bootOtherSlot() {
 extern "C" bool verifyRollbackLater() { return true; }
 
 /* Whether the boot record already has this image down as good. It is written there when a build proves itself, and a newly installed or switched-to image never starts with it, so it says the same as the "okbuild" note without needing room in the settings store: with that store full the note was never written, and every start was a trial (0.7.12). */
+/* The boot record speaks for this image only while it is the one the record selects. If the bootloader ever starts another slot because the selected image would not load, the record's good mark and its "mark as good" both belong to that other image. */
+static bool runningIsBootSlot() {
+  const esp_partition_t *running = esp_ota_get_running_partition();
+  const esp_partition_t *boot = esp_ota_get_boot_partition();
+  return running && boot && running->address == boot->address;
+}
+
 static bool imageMarkedGood() {
   const esp_partition_t *running = esp_ota_get_running_partition();
   esp_ota_img_states_t state;
-  return running && esp_ota_get_state_partition(running, &state) == ESP_OK && state == ESP_OTA_IMG_VALID;
+  return runningIsBootSlot() && esp_ota_get_state_partition(running, &state) == ESP_OK && state == ESP_OTA_IMG_VALID;
 }
 
 /* The trial is failed: hand the bar to the other slot. Returns only if there is nothing there to go back to (flashed by USB), and then this build carries on as it is. */
@@ -1701,14 +1708,20 @@ static void watchTrial() {
 
   if (onTrial) {
     if (connectedSince && millis() - connectedSince > TRIAL_PROVEN_MS) {
-      esp_ota_mark_app_valid_cancel_rollback();
+      if (runningIsBootSlot()) esp_ota_mark_app_valid_cancel_rollback();
       prefs.putString("okbuild", BUILD_ID);
+      if (prefs.isKey("micblame")) prefs.remove("micblame");
       onTrial = false;
     } else if (!connectedSince && millis() - trialFrom > trialAllow) {
       failTrial();   // if it comes back there is nothing to go back to: carry on and offer the setup network
     } else if (!apUp && !wifiSsid.length()) {
       /* No network name from this firmware or from stock, so there is nothing to join and no other way to be given one: the setup network comes up now rather than after the trial has already been lost (0.7.12). */
       startAp();
+    }
+    /* The same retry a proven build makes, below. Wi-Fi details given through the setup network are joined by one call, and that call can be refused while the radio is busy: without this they were never tried again before the trial ran out. */
+    if (onTrial && !connected && wifiSsid.length() && millis() - lastTryAt > 30000) {
+      lastTryAt = millis();
+      WiFi.begin(wifiSsid.c_str(), wifiPass.c_str());
     }
     return;
   }
@@ -2164,9 +2177,11 @@ static void handleWifi() {
     /* On trial a restart may be the end of it: a bootloader that rolls back takes a second start of an unproven image as its failure. So the network is joined as the bar stands, and the wait for it starts again from here. */
     wifiSsid = ssid;
     wifiPass = pass ? pass : "";
-    trialFrom = millis();
-    trialAllow = TRIAL_GIVE_UP_MS;
-    sendResult(true, "Saved. Joining it now, without a restart, because this version is still on trial.");
+    /* At least two minutes from now to join it, and never less than was already left: a mistyped password in the first minute of the ten must not cut the rest of them short. */
+    const uint32_t spent = millis() - trialFrom;
+    if (spent >= trialAllow || trialAllow - spent < TRIAL_GIVE_UP_MS) { trialFrom = millis(); trialAllow = TRIAL_GIVE_UP_MS; }
+    apByButton = false;   // the setup network has done what it was raised for: it goes once the bar has been on Wi-Fi for a minute, as it would have after the restart this path leaves out
+    sendResult(true, (String("Saved. Joining it now, without a restart, because this version is still on trial. On that network the bar is at http://") + hostName + ".local").c_str());
     delay(300);   // the answer leaves before the radio moves to the new network's channel
     WiFi.begin(wifiSsid.c_str(), wifiPass.c_str());
     lastTryAt = millis();
@@ -2311,7 +2326,11 @@ static void handleSlot() {
   if (esp_ota_set_boot_partition(part) != ESP_OK) return sendResult(false, "The firmware in the other slot does not check out, so the bar stays on this one");
   sendResult(true, "Restarting into the other slot");
   delay(500);
-  bootOtherSlot();
+  /* Not bootOtherSlot(): that sets the boot slot again, and a second write lands on the boot record's other entry, the one for the slot being left. With both entries on the new slot a failed trial there "went back" to itself first, and the slot left behind had lost its good mark (0.7.12). */
+  memset(frame, 0, sizeof frame);
+  outShow();
+  delay(200);
+  ESP.restart();
 }
 
 /* Forget everything this firmware has saved (looks, mode, pairing, Wi-Fi) and start again. Stock's own settings are a separate namespace and are not touched, so the bar comes back on the Wi-Fi and pairing stock had. */
@@ -2364,6 +2383,7 @@ static void handleUpdateChunk() {
   } else if (upload.status == UPLOAD_FILE_ABORTED) {
     if (uploadOk) Update.abort();   // only an update this upload began: the one from GitHub is not ours to stop
     uploadOk = false;
+    uploadOnTrial = false;
     barProgress = -1;
   }
   if (barProgress >= 0 && millis() - drawnAt > 150) { drawnAt = millis(); renderProgress(); }
@@ -3441,11 +3461,20 @@ void setup() {
   const bool markedGood = imageMarkedGood();
   onTrial = !markedGood && prefs.getString("okbuild", "") != BUILD_ID;
   /* A build that proved itself before but is not down as good in the boot record (it was switched back to) is put down again: a bootloader that rolls back would otherwise drop it at its next start. */
-  if (!onTrial && !markedGood) esp_ota_mark_app_valid_cancel_rollback();
+  if (!onTrial && !markedGood && runningIsBootSlot()) esp_ota_mark_app_valid_cancel_rollback();
   if (onTrial) {
     /* A build on trial that has just fallen over has failed it. Waiting out the two minutes again would be a loop wherever the fault comes sooner than that, with only the bootloader's rollback to break it, and whether stock's bootloader has one is not known. */
     const esp_reset_reason_t why = esp_reset_reason();
-    if (why == ESP_RST_PANIC || why == ESP_RST_INT_WDT || why == ESP_RST_TASK_WDT || why == ESP_RST_WDT) failTrial();
+    if (why == ESP_RST_PANIC || why == ESP_RST_INT_WDT || why == ESP_RST_TASK_WDT || why == ESP_RST_WDT) {
+#if defined(BOARD_P2)
+      /* Except once, where the microphone's start on this build was still unconfirmed: that is what its guard, further down, is for. It leaves the microphone off this time, and the build goes on with its trial. A second fall is the build's own. The excuse is written down before it is used, and only used if the note took, so it cannot be had twice. */
+      const bool blameMic = prefs.getString("audiotry", "") == BUILD_ID && prefs.getString("micblame", "") != BUILD_ID;
+      if (blameMic) prefs.putString("micblame", BUILD_ID);
+      if (!blameMic || prefs.getString("micblame", "") != BUILD_ID) failTrial();
+#else
+      failTrial();
+#endif
+    }
   }
   startWifi();
   if (onTrial && !wifiSsid.length()) trialAllow = TRIAL_SETUP_MS;

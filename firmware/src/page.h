@@ -557,6 +557,9 @@ async function tick(){
   const o=s.otherSlot;
   $('slots').textContent='Running from '+s.slot+' ('+s.build+')'+(s.onTrial?' · on trial until it has been on Wi-Fi for 20 s':'')+'. Other slot ('+o.label+'): '+(o.project?o.project+' '+o.version+', built '+o.built:'empty')+'.';
   $('other').disabled=!o.project; $('backup').disabled=!o.project;
+  // A build on trial takes no new firmware: the other slot is its way back. Said on the buttons, rather than after a whole file has been sent.
+  const waitTrial=s.onTrial?'This version is still on trial. It takes new firmware once it has been on Wi-Fi for 20 seconds.':'';
+  $('up').disabled=s.onTrial; $('up').title=waitTrial; $('updinstall').disabled=s.onTrial; $('updinstall').title=waitTrial;
   // Named for what is there: stock after the first install, an earlier Panda State once an update has replaced it.
   $('other').textContent=!o.project||!o.ours?'Switch to the stock firmware':'Go back to the previous version';
   // The dump button is always there, and says which firmware it would save: it copies whatever the other slot holds.
