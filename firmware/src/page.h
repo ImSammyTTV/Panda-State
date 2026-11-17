@@ -187,7 +187,7 @@ button.go.warn{background:#ef4444;color:#fff}
   <div class="line"><label class="tog"><input type="checkbox" id="updauto"> Look for a new release once a day (it is never installed without you)</label></div>
   <div class="sub" id="slots" style="margin-top:12px"></div>
   <div class="line"><input class="grow" id="bin" type="file" accept=".bin"><button id="up">Install file</button></div>
-  <div class="line"><button id="other">Switch to the stock firmware</button><button id="backup" title="Saves a copy of the stock firmware to this device. Keep it: an update later writes over where it is kept, and Install file puts it back.">Dump stock firmware</button><button id="reboot">Restart</button><button id="factory">Reset settings</button></div>
+  <div class="line"><button id="other">Switch to the stock firmware</button><button id="backup" title="Saves a copy of the stock firmware to this device. Keep it: an update later writes over where it is kept, and Install file puts it back.">Dump stock firmware</button><button id="report" title="Downloads a report of what the bar is doing and what has gone wrong lately. It holds no Wi-Fi name or password, access code, serial number or Home Assistant login.">Save a report</button><button id="reboot">Restart</button><button id="factory">Reset settings</button></div>
   <div class="msg" id="fwmsg"></div>
 </details>
 
@@ -503,6 +503,7 @@ $('rev').onchange=()=>post('/api/config',{reversed:$('rev').checked});
 $('bri').oninput=()=>{$('briv').textContent=$('bri').value+'%';};
 $('bri').onchange=()=>{busy=Date.now();post('/api/config',{brightness:+$('bri').value});};
 $('wifi').onclick=async()=>{const r=await post('/api/wifi',{ssid:$('ssid').value,password:$('pass').value});$('wifimsg').textContent=r.message||(r.ok?'Saved':'Not saved');};
+$('report').onclick=()=>{location.href='/api/log';$('fwmsg').innerHTML='Saved as panda-state-report.txt. To report a problem, attach it to a <a href="https://github.com/ImSammyTTV/Panda-State/issues/new" target="_blank" rel="noopener">new issue on GitHub</a>.';};
 $('reboot').onclick=async()=>{const r=await post('/api/reboot');$('fwmsg').textContent=r.message||'';};
 $('other').onclick=()=>{const stock=last&&!last.otherSlot.ours;
   const act=async()=>{const r=await post('/api/slot');if(!r.ok)throw new Error(r.message||'The bar did not switch');$('fwmsg').textContent=r.message||'';};

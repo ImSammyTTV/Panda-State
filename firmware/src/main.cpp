@@ -147,6 +147,73 @@ struct PandaServer : WebServer {
   bool uploading() const { return (bool)_currentUpload; }
 };
 static PandaServer server(80);
+
+/* ---------------------------------------------------------------- log -- */
+
+/**
+ * What the owner did and what went wrong, for a bug report (GET /api/log, "Save a report" on the page).
+ *
+ * Kept in memory a restart does not clear, so after a crash the lines that led up to it are still there;
+ * a power cut does clear it. Only the loop task writes it: other tasks' errors are picked up by
+ * logWatch() once a second, from the same fields the page shows. Nothing secret goes in: no Wi-Fi name
+ * or password, no access code, no serial number, no Home Assistant user or password.
+ */
+static const uint32_t LOG_MAGIC = 0x50534C31;
+static const size_t LOG_SIZE = 3072;
+struct LogStore { uint32_t magic, head, used, starts; char text[LOG_SIZE]; };
+RTC_NOINIT_ATTR static LogStore logStore;
+
+static void logBegin() {
+  /* After a power cut this memory holds noise: anything that does not add up is started afresh. */
+  if (logStore.magic != LOG_MAGIC || logStore.head >= LOG_SIZE || logStore.used > LOG_SIZE) {
+    memset(&logStore, 0, sizeof logStore);
+    logStore.magic = LOG_MAGIC;
+  }
+  logStore.starts++;
+}
+
+static void logLine(const char *format, ...) {
+  char line[176];
+  const uint32_t up = millis() / 1000;
+  int at = snprintf(line, sizeof line, "%lu:%02lu:%02lu ", (unsigned long)(up / 3600), (unsigned long)(up / 60 % 60), (unsigned long)(up % 60));
+  va_list args;
+  va_start(args, format);
+  vsnprintf(line + at, sizeof line - at - 1, format, args);
+  va_end(args);
+  size_t length = strlen(line);
+  line[length++] = '\n';
+  for (size_t i = 0; i < length; i++) {
+    logStore.text[logStore.head] = line[i];
+    logStore.head = (logStore.head + 1) % LOG_SIZE;
+    if (logStore.used < LOG_SIZE) logStore.used++;
+  }
+}
+
+/* The log, oldest line first. Once it has gone round, the first line is a partial one and is left out. */
+static void logAppendTo(String &out) {
+  const size_t start = logStore.used < LOG_SIZE ? 0 : logStore.head;
+  size_t i = 0;
+  if (logStore.used == LOG_SIZE) while (i < LOG_SIZE && logStore.text[(start + i) % LOG_SIZE] != '\n') i++;
+  if (logStore.used == LOG_SIZE) i++;
+  for (; i < logStore.used; i++) out += logStore.text[(start + i) % LOG_SIZE];
+}
+
+static void handleLog();   // with loop(), below: it reads most of the firmware's state
+
+static const char *resetText(esp_reset_reason_t why) {
+  switch (why) {
+    case ESP_RST_POWERON: return "power on";
+    case ESP_RST_SW: return "restarted by the firmware";
+    case ESP_RST_PANIC: return "crash (panic)";
+    case ESP_RST_INT_WDT: return "crash (interrupt watchdog)";
+    case ESP_RST_TASK_WDT: return "crash (task watchdog)";
+    case ESP_RST_WDT: return "crash (watchdog)";
+    case ESP_RST_BROWNOUT: return "power dipped (brownout)";
+    case ESP_RST_DEEPSLEEP: return "woke from sleep";
+    case ESP_RST_EXT: return "reset pin";
+    default: return "unknown";
+  }
+}
 static Preferences prefs;
 
 /* ------------------------------------------------------------- looks -- */
@@ -1786,6 +1853,7 @@ static bool imageMarkedGood() {
 
 /* The trial is failed: hand the bar to the other slot. Returns only if there is nothing there to go back to (flashed by USB), and then this build carries on as it is. */
 static void failTrial() {
+  logLine("Trial failed: handing the bar back to the other slot");
   /* The bootloader's own rollback first, if stock's bootloader has it; our own switch of slots if it does not. */
   esp_ota_mark_app_invalid_rollback_and_reboot();
   bootOtherSlot();
@@ -1806,6 +1874,7 @@ static void watchTrial() {
       prefs.putString("okbuild", BUILD_ID);
       if (prefs.isKey("micblame")) prefs.remove("micblame");
       onTrial = false;
+      logLine("Trial passed: this version is kept");
     } else if (!connectedSince && millis() - trialFrom > trialAllow) {
       failTrial();   // if it comes back there is nothing to go back to: carry on and offer the setup network
     } else if (!apUp && !wifiSsid.length()) {
@@ -2116,14 +2185,19 @@ static void handleState() {
 static void handleConfig() {
   JsonDocument doc;
   if (!readBody(doc)) return;
+  {
+    String keys;
+    for (JsonPairConst field : doc.as<JsonObjectConst>()) { if (keys.length()) keys += ", "; keys += field.key().c_str(); }
+    logLine("Settings changed: %s", keys.c_str());
+  }
   /* All or nothing: fields are applied one after another, and a bad one used to leave the good ones before it changed on the bar but unsaved. */
   JsonDocument before;
   configToJson(before);
   const char *error = applyConfig(doc.as<JsonVariantConst>());
-  if (error) { applyConfig(before.as<JsonVariantConst>()); return sendResult(false, error); }
+  if (error) { applyConfig(before.as<JsonVariantConst>()); logLine("  refused: %s", error); return sendResult(false, error); }
   saveConfig();
   // Say so when the store refused it: the change works now but would be gone after a restart.
-  if (!cfgSaveOk) return sendResult(false, "Changed, but the bar could not save it: it will be lost on a restart");
+  if (!cfgSaveOk) { logLine("  not saved: the settings store is full"); return sendResult(false, "Changed, but the bar could not save it: it will be lost on a restart"); }
   sendResult(true);
 }
 
@@ -2248,6 +2322,7 @@ static void handleAddon() {
 /* What the bar can be asked to do, for anyone writing something to talk to it. */
 static const char API_DOC[] PROGMEM = R"JSON({"about":"Panda State, open firmware for BIQU Panda Status P2, Panda Status, Panda Lux RGB and Panda RGB Controller (board in /api/status). JSON in, JSON out, no sign-in; every POST answers {ok, message?}.",
 "endpoints":[
+{"call":"GET /api/log","does":"A report for a bug report: version, state, settings and a log of what the owner did and what went wrong, kept across restarts. Holds no Wi-Fi name or password, access code, serial or Home Assistant login"},
 {"call":"GET /api/status","does":"Everything: what is showing and why, printer link, microphone, clock, add-ons, settings, the 25 LEDs as hex"},
 {"call":"POST /api/state","body":{"state":"idle|printing|paused|finished|cooling|ready|error|off","progress":"0-100"},"does":"A controller saying what the printer is doing. Repeat at least every 45 s; when it stops, the bar's own printer link takes over"},
 {"call":"POST /api/addon","body":{"id":"a-z0-9-_ up to 15","name":"shown on the page","ttl":"seconds this post stays valid, default 120","look":{"colour":"#RRGGBB","colour2":"#RRGGBB","effect":"any effect listed under /api/config","speed":"1-100","progress":"0-100"},"meters":[{"value":"0-100","colour":"#RRGGBB"}],"frame":"25 colours as a list of #RRGGBB or 150 hex digits"},"does":"An add-on saying what it wants shown: send ONE of look, meters (1-4) or frame, and keep posting. Shown only if picked under Add-ons. {id, remove:true} withdraws it"},
@@ -2280,8 +2355,10 @@ static void handleWifi() {
   if (prefs.getString("ssid", "") != ssid || prefs.getString("pass", "") != (pass ? pass : "")) {
     if (had) { prefs.putString("ssid", oldSsid); prefs.putString("pass", oldPass); }
     else { prefs.remove("ssid"); prefs.remove("pass"); }
+    logLine("Wi-Fi details not saved: the settings store is full");
     return sendResult(false, "The bar could not save that: its settings store is full. Removing an add-on file makes room.");
   }
+  logLine("Wi-Fi details changed%s", onTrial ? " (on trial: joining without a restart)" : "; restarting to join");
   if (onTrial) {
     /* On trial a restart may be the end of it: a bootloader that rolls back takes a second start of an unproven image as its failure. So the network is joined as the bar stands, and the wait for it starts again from here. */
     wifiSsid = ssid;
@@ -2359,6 +2436,7 @@ static void handlePrinter() {
   if (!readBody(doc)) return;
   String ip, serial, code;
   const bool klipper = !doc["forget"].as<bool>() && strcmp(doc["type"] | "bambu", "klipper") == 0;
+  logLine("Printer pairing changed: %s", doc["forget"].as<bool>() ? "unpaired" : klipper ? "Klipper" : "Bambu Lab");
   uint16_t port = 7125;
   if (klipper) {
     ip = doc["host"] | "";
@@ -2437,7 +2515,8 @@ static void handleSlot() {
     if (board[0] && strcmp(board, BOARD_ID)) return sendResult(false, "The other slot holds Panda State for another board, so the bar stays on this one");
   }
   /* Checked in full before promising anything: a slot left half-written by a failed update still has a readable header. */
-  if (esp_ota_set_boot_partition(part) != ESP_OK) return sendResult(false, "The firmware in the other slot does not check out, so the bar stays on this one");
+  if (esp_ota_set_boot_partition(part) != ESP_OK) { logLine("Switch slot refused: the other slot's firmware does not check out"); return sendResult(false, "The firmware in the other slot does not check out, so the bar stays on this one"); }
+  logLine("Switching to the other slot (%s %s)", desc.project_name, desc.version);
   sendResult(true, "Restarting into the other slot");
   delay(500);
   /* Not bootOtherSlot(): that sets the boot slot again, and a second write lands on the boot record's other entry, the one for the slot being left. With both entries on the new slot a failed trial there "went back" to itself first, and the slot left behind had lost its good mark (0.7.12). */
@@ -2449,6 +2528,7 @@ static void handleSlot() {
 
 /* Forget everything this firmware has saved (looks, mode, pairing, Wi-Fi) and start again. Stock's own settings are a separate namespace and are not touched, so the bar comes back on the Wi-Fi and pairing stock had. */
 static void handleFactory() {
+  logLine("Settings reset by the owner");
   /* The note that this build has proved itself is not a setting. Without it the restart is a trial again, and a bar reset because its Wi-Fi changed would wait two minutes with no setup network and then hand itself to the other slot. */
   const String proven = prefs.getString("okbuild", "");
   prefs.clear();
@@ -2459,6 +2539,7 @@ static void handleFactory() {
 }
 
 static void handleReboot() {
+  logLine("Restart asked for from the page");
   sendResult(true, "Restarting");
   delay(500);
   ESP.restart();
@@ -2471,13 +2552,15 @@ static char uploadBoard[16] = "";    // the board the file was made for, when it
 static void handleUpdateDone() {
   const bool ok = uploadOk;
   uploadOk = false;
-  if (!ok && uploadOnTrial) { uploadOnTrial = false; return sendResult(false, TRIAL_NO_UPDATE); }
+  if (!ok && uploadOnTrial) { uploadOnTrial = false; logLine("Firmware upload refused: this version is on trial"); return sendResult(false, TRIAL_NO_UPDATE); }
   if (!ok && uploadBoard[0]) {
     const String why = String("That file is Panda State for another board (") + uploadBoard + "); this is a " BOARD_NAME ", whose files are named panda-" BOARD_ID "-custom-<version>.bin. Nothing was written.";
+    logLine("Firmware upload refused: made for the %s board", uploadBoard);
     uploadBoard[0] = 0;
     return sendResult(false, why.c_str());
   }
-  if (!ok) return sendResult(false, Update.hasError() ? Update.errorString() : "No firmware file arrived, or another update is already running");
+  if (!ok) { logLine("Firmware upload failed: %s", Update.hasError() ? Update.errorString() : "no file, or another update running"); return sendResult(false, Update.hasError() ? Update.errorString() : "No firmware file arrived, or another update is already running"); }
+  logLine("Firmware uploaded: restarting into it");
   sendResult(true, "Installed. Restarting into it.");
   delay(800);
   ESP.restart();
@@ -3281,6 +3364,13 @@ static void handleUpdateApi() {
 static void handleAddonFile() {
   JsonDocument doc;
   if (!readBody(doc)) return;
+  {
+    /* The server only: an owner's own address can carry a key in its path or query. */
+    String where = doc["url"] | "";
+    const int hostAt = where.indexOf("://");
+    if (hostAt >= 0) { where = where.substring(hostAt + 3); const int end = where.indexOf('/'); if (end >= 0) where = where.substring(0, end); }
+    logLine("Add-on file: %s%s", doc["remove"].as<bool>() ? "removed" : !doc["url"].isNull() ? "from " : "uploaded", doc["remove"].as<bool>() || doc["url"].isNull() ? "" : where.c_str());
+  }
   if (doc["remove"].as<bool>()) {
     prefs.remove("faurl");
     prefs.remove("fajson");
@@ -3617,6 +3707,7 @@ static void haToJson(JsonDocument &doc) {
 static void handleHa() {
   JsonDocument doc;
   if (!readBody(doc)) return;
+  logLine("Home Assistant settings changed");
   xSemaphoreTake(haLock, portMAX_DELAY);
   bool on = haOn; String host = haHost, user = haUser, pass = haPass, prefix = haPrefix; uint16_t port = haPort;
   xSemaphoreGive(haLock);
@@ -3658,6 +3749,12 @@ static void handleHa() {
 
 void setup() {
   Serial.begin(115200);
+  logBegin();
+  {
+    const esp_partition_t *running = esp_ota_get_running_partition();
+    logLine("---- Start %lu: Panda State %s (%s), %s, slot %s, free memory %u", (unsigned long)logStore.starts, BUILD_ID, BOARD_ID,
+            resetText(esp_reset_reason()), running ? running->label : "?", (unsigned)ESP.getFreeHeap());
+  }
   prefs.begin("panda", false);
   loadConfig();
   outBegin();
@@ -3670,6 +3767,7 @@ void setup() {
     /* A build on trial that has just fallen over has failed it. Waiting out the two minutes again would be a loop wherever the fault comes sooner than that, with only the bootloader's rollback to break it, and whether stock's bootloader has one is not known. */
     const esp_reset_reason_t why = esp_reset_reason();
     if (why == ESP_RST_PANIC || why == ESP_RST_INT_WDT || why == ESP_RST_TASK_WDT || why == ESP_RST_WDT) {
+      logLine("Crashed while on trial");
 #if defined(BOARD_P2)
       /* Except once, where the microphone's start on this build was still unconfirmed: that is what its guard, further down, is for. It leaves the microphone off this time, and the build goes on with its trial. A second fall is the build's own. The excuse is written down before it is used, and only used if the note took, so it cannot be had twice. */
       const bool blameMic = prefs.getString("audiotry", "") == BUILD_ID && prefs.getString("micblame", "") != BUILD_ID;
@@ -3682,6 +3780,8 @@ void setup() {
   }
   startWifi();
   if (onTrial && !wifiSsid.length()) trialAllow = TRIAL_SETUP_MS;
+  if (onTrial) logLine("On trial: %s", wifiSsid.length() ? "has 2 minutes to join Wi-Fi" : "no Wi-Fi details, setup hotspot up for 10 minutes");
+  if (!wifiSsid.length()) logLine("Wi-Fi: no details saved here or by stock");
   applyTimeZone();
 
   prLock = xSemaphoreCreateMutex();
@@ -3740,6 +3840,7 @@ void setup() {
     server.sendHeader("Cache-Control", "no-store");
     server.send(200, "text/plain", hex);
   });
+  server.on("/api/log", HTTP_GET, handleLog);
   server.on("/api/addonfile", HTTP_POST, handleAddonFile);
   server.on("/api/ap", HTTP_POST, handleAp);
   server.on("/api/wifi/scan", HTTP_GET, handleWifiScan);
@@ -3804,6 +3905,85 @@ static void handleHostName() {
   sendResult(true, now.c_str());
 }
 
+/* Changes in what the other tasks report, written to the log once a second from here, so that only this task writes it. The same fields the page shows; a line only when one changes. */
+static void logWatch() {
+  static int wifiWas = -1;
+  const int wifi = WiFi.status() == WL_CONNECTED;
+  if (wifi != wifiWas) {
+    if (wifi) logLine("Wi-Fi: joined, %s, %d dBm", WiFi.localIP().toString().c_str(), (int)WiFi.RSSI());
+    else if (wifiWas == 1) logLine("Wi-Fi: lost");
+    wifiWas = wifi;
+  }
+  static int apWas = 0;
+  if ((int)apUp != apWas) { logLine("Setup hotspot: %s", apUp ? "on" : "off"); apWas = apUp; }
+
+  static char prErrorWas[sizeof prError] = "";
+  static int prLinkedWas = 0;
+  if ((int)prConnected != prLinkedWas) { logLine("Printer: %s", prConnected ? "linked" : "not linked"); prLinkedWas = prConnected; }
+  char now[sizeof prError];
+  strlcpy(now, prError, sizeof now);
+  if (strcmp(now, prErrorWas)) { if (now[0]) logLine("Printer: %s", now); strlcpy(prErrorWas, now, sizeof prErrorWas); }
+  static char gcodeWas[sizeof prGcode] = "";
+  char gcode[sizeof prGcode];
+  strlcpy(gcode, prGcode, sizeof gcode);
+  if (gcode[0] && strcmp(gcode, gcodeWas)) { logLine("Printer says %s", gcode); strlcpy(gcodeWas, gcode, sizeof gcodeWas); }
+
+  static int haWas = 0;
+  if ((int)haConnected != haWas) { logLine("Home Assistant: %s", haConnected ? "connected" : "not connected"); haWas = haConnected; }
+  static char haErrorWas[sizeof haError] = "";
+  char haNow[sizeof haError];
+  strlcpy(haNow, haError, sizeof haNow);
+  if (strcmp(haNow, haErrorWas)) { if (haNow[0]) logLine("Home Assistant: %s", haNow); strlcpy(haErrorWas, haNow, sizeof haErrorWas); }
+
+  static String faErrorWas;
+  const String faNow = faError;
+  if (faNow != faErrorWas) { if (faNow.length()) logLine("Add-on: %s", faNow.c_str()); faErrorWas = faNow; }
+
+  static int updWas = -1;
+  if (updPhase != updWas) {
+    updWas = updPhase;
+    if (updPhase == UPD_FAILED) logLine("Update: failed: %s", updMessage.c_str());
+    else if (updPhase == UPD_AVAILABLE) logLine("Update: %s is available", updLatest);
+    else if (updPhase == UPD_DOWNLOADING) logLine("Update: downloading %s", updLatest);
+    else if (updPhase == UPD_DONE) logLine("Update: installed, restarting");
+  }
+
+  /* Memory running low is behind most of the failures the secure connections have shown. */
+  static uint32_t lowestLogged = UINT32_MAX;
+  const uint32_t lowest = ESP.getMinFreeHeap();
+  if (lowest + 4096 < lowestLogged) { logLine("Memory: lowest free so far %u bytes", (unsigned)lowest); lowestLogged = lowest; }
+}
+
+/* A report to attach to a GitHub issue: what the bar is and what it is doing, its settings, and the log. Nothing secret, as above. */
+static void handleLog() {
+  String out;
+  out.reserve(LOG_SIZE + 3072);
+  out += "Panda State report\n";
+  out += String("Firmware: ") + BUILD_ID + " for the " BOARD_NAME " (" BOARD_ID ")\n";
+  const esp_partition_t *running = esp_ota_get_running_partition();
+  out += String("Slot: ") + (running ? running->label : "?") + (onTrial ? ", on trial" : "") + "\n";
+  const uint32_t up = millis() / 1000;
+  out += String("Up: ") + (up / 86400) + " d " + (up / 3600 % 24) + " h " + (up / 60 % 60) + " min; last start: " + resetText(esp_reset_reason()) + "; starts in this log: " + logStore.starts + "\n";
+  out += String("Memory: free ") + ESP.getFreeHeap() + ", lowest " + ESP.getMinFreeHeap() + ", largest block " + ESP.getMaxAllocHeap() + "\n";
+  out += String("Wi-Fi: ") + (WiFi.status() == WL_CONNECTED ? String("joined, ") + WiFi.RSSI() + " dBm" : String("not joined")) + (apUp ? "; setup hotspot on" : "") + "\n";
+  out += String("Printer: ") + (prKind == PR_KLIPPER ? "Klipper" : "Bambu Lab") + (prConnected ? ", linked" : ", not linked") + (prGcode[0] ? String(", says ") + prGcode : String("")) + (prError[0] ? String(", ") + prError : String("")) + "\n";
+  out += String("Home Assistant: ") + (haOn ? (haConnected ? "connected" : "not connected") : "off") + (haError[0] ? String(", ") + haError : String("")) + "\n";
+  out += String("Add-on file: ") + FA_NAMES[faKind] + (faId[0] ? String(" ") + faId : String("")) + (faError.length() ? String(", ") + faError : String("")) + "\n";
+  out += String("Update check: ") + UPD_NAMES[updPhase] + (updMessage.length() ? String(", ") + updMessage : String("")) + "\n";
+  {
+    JsonDocument doc;
+    configToJson(doc);
+    out += "Settings: ";
+    serializeJson(doc, out);
+    out += "\n";
+  }
+  out += "\n---- What happened, oldest first (kept across restarts, not across a power cut)\n";
+  logAppendTo(out);
+  server.sendHeader("Content-Disposition", "attachment; filename=\"panda-state-report.txt\"");
+  server.sendHeader("Cache-Control", "no-store");
+  server.send(200, "text/plain; charset=utf-8", out);
+}
+
 void loop() {
   server.handleClient();
   static uint32_t lastFrameAt = 0;
@@ -3816,6 +3996,7 @@ void loop() {
   static uint32_t lastWatchAt = 0;
   if (millis() - lastWatchAt >= 1000) {
     lastWatchAt = millis();
+    logWatch();
     watchTrial();
     keepOtherNames();
     trackPrinter();

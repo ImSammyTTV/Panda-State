@@ -268,6 +268,11 @@ way: the copy can be put back any time.
   starts `PandaP2-Setup` (`PandaState-Setup` on the other boards), password `panda` + the last six hex digits of its MAC
   (the page shows it). Join it and open `http://192.168.4.1/`. It cannot be
   switched off for good.
+- **A report for bug reports.** *Save a report* in the Firmware section
+  downloads what the bar is doing, its settings and a log of recent events
+  (0.7.14 and later). The log survives a restart or a crash, not a power cut.
+  It holds no Wi-Fi name or password, access code, serial number or Home
+  Assistant login. Attach it to a [new issue](https://github.com/ImSammyTTV/Panda-State/issues/new).
 - **Updates are checked.** Downloads must match the release's SHA256 checksum,
   and HTTPS is checked against built-in root certificates, never skipped.
 - **Stock's settings are never written**, so going back to stock finds
