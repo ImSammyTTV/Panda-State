@@ -51,7 +51,7 @@
 
 /* What the firmware calls itself on its page and in /api/status. Plain and generic, so it says what it is on anyone's network. */
 #define FW_NAME "panda"
-#define FW_VERSION "0.7.14"
+#define FW_VERSION "0.7.15"
 /* Where new releases and the add-on store live. A release must carry a
    panda-<board>-custom-<version>.bin for each board and a SHA256SUMS.txt that lists them. */
 #define UPDATE_REPO "ImSammyTTV/Panda-State"
@@ -2663,9 +2663,16 @@ static bool prPaired() {
 /* A String that stops growing at cap: the HTTP client's copy then ends with a write error instead of reading on until the memory runs out. getString() had no ceiling for an answer sent without a length (chunked), which is how many APIs answer. */
 struct CappedString : StreamString {
   size_t cap;
+  bool overCap = false;      // refused because the answer is bigger than cap
+  bool noMemory = false;     // refused because the memory to grow into was not there in one piece
   explicit CappedString(size_t c) : cap(c) {}
-  size_t write(const uint8_t *data, size_t size) override { return length() + size > cap ? 0 : StreamString::write(data, size); }
-  size_t write(uint8_t c) override { return length() + 1 > cap ? 0 : StreamString::write(c); }
+  size_t write(const uint8_t *data, size_t size) override {
+    if (length() + size > cap) { overCap = true; return 0; }
+    const size_t done = StreamString::write(data, size);
+    if (!done && size) noMemory = true;
+    return done;
+  }
+  size_t write(uint8_t c) override { return write(&c, 1); }
 };
 
 struct Fetch {
@@ -2675,6 +2682,7 @@ struct Fetch {
   String host;                 // the server of the last hop, for the error message
   bool held = false;           // the printer link was let go for this download; picked up again when it is done
   bool holdFirst = false;      // let the printer link go before the first try, not after it fails: a failed handshake costs seconds someone is watching
+  bool http10 = false;         // ask in HTTP/1.0, so the answer is never chunked and can be parsed straight off the connection
   void hold() {
     held = true;
     prHoldAck = false;
@@ -2686,6 +2694,7 @@ struct Fetch {
   int begin(String url, uint32_t timeoutMs = 15000) {
     if (holdFirst && !held && url.startsWith("https://") && prKind == PR_BAMBU && prPaired()) hold();
     static const char *keep[] = {"Location"};
+    http.useHTTP10(http10);
     for (int hop = 0; hop < 5; hop++) {
       http.end();
       tls.stop();
@@ -2739,8 +2748,8 @@ struct Fetch {
     CappedString got(cap);
     if (size > 0) got.reserve(size + 1);
     const int result = http.writeToStream(&got);
-    /* The client gives the same error for a reader that would take no more and for an answer cut short, so it is "too big" only if the ceiling was what stopped it. */
-    if (result == HTTPC_ERROR_STREAM_WRITE && got.length() + HTTP_TCP_BUFFER_SIZE < cap) return HTTPC_ERROR_CONNECTION_LOST;
+    /* The client gives the same error for a reader that would take no more, for one that had no memory left, and for an answer cut short; the reader knows which. 0.7.14 called a shortage of memory "connection lost". */
+    if (result == HTTPC_ERROR_STREAM_WRITE) return got.overCap ? HTTPC_ERROR_STREAM_WRITE : got.noMemory ? HTTPC_ERROR_TOO_LESS_RAM : HTTPC_ERROR_CONNECTION_LOST;
     if (result < 0) return result;
     out = std::move(static_cast<String &>(got));
     return 0;
@@ -2749,6 +2758,7 @@ struct Fetch {
   String error(int code) {
     if (code > 0) return host + " answered " + String(code);
     if (code == -100) return "The address could not be read";
+    if (code == HTTPC_ERROR_TOO_LESS_RAM) return host + ": not enough memory in one piece for the answer (largest free block " + String(ESP.getMaxAllocHeap() / 1024) + " KB); it is tried again later";
     char tlsWhy[96] = "";
     const int tlsCode = tls.lastError(tlsWhy, sizeof tlsWhy);
     String why = host + ": " + HTTPClient::errorToString(code);
@@ -2780,6 +2790,7 @@ static bool updAuto = true;                      // look once a day and say so o
 static bool updCheck() {
   updPhase = UPD_CHECKING;
   Fetch f;
+  f.http10 = true;   // the answer is parsed as it arrives, below, which a chunked one would garble
   const int code = f.begin("https://api.github.com/repos/" UPDATE_REPO "/releases/latest");
   if (code != 200) { updMessage = code == 404 ? String("No release published yet") : f.error(code); updPhase = UPD_FAILED; return false; }
   JsonDocument filter;
@@ -2787,11 +2798,10 @@ static bool updCheck() {
   filter["html_url"] = true;
   filter["assets"][0]["name"] = true;
   filter["assets"][0]["browser_download_url"] = true;
-  String answer;
-  const int got = f.body(answer, 60000);   // about 14 KB today; a String holds at most 64 KB
-  if (got < 0) { updMessage = got == HTTPC_ERROR_STREAM_WRITE ? String("GitHub's answer was too big to read") : f.error(got); updPhase = UPD_FAILED; return false; }
+  /* Parsed as it arrives, keeping only the fields above: the whole answer (12.6 KB in 0.7.14) never has to fit in memory at once. Collecting it first needed that much in one piece beside two secure connections, and failed when it was not there. */
   JsonDocument doc;
-  if (deserializeJson(doc, answer, DeserializationOption::Filter(filter))) { updMessage = "GitHub's answer could not be read"; updPhase = UPD_FAILED; return false; }
+  const DeserializationError bad = deserializeJson(doc, f.http.getStream(), DeserializationOption::Filter(filter));
+  if (bad) { updMessage = String("GitHub's answer could not be read (") + bad.c_str() + ")"; updPhase = UPD_FAILED; return false; }
   strlcpy(updLatest, doc["tag_name"] | "", sizeof updLatest);
   updPageUrl = doc["html_url"] | "";
   updAssetName = updAssetUrl = updSumsUrl = "";
