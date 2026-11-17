@@ -222,11 +222,13 @@ static Preferences prefs;
 enum Effect : uint8_t {
   FX_SOLID, FX_BREATHE, FX_FILL, FX_FLASH, FX_CHASE, FX_RAINBOW,
   FX_GRADIENT, FX_WAVES, FX_SCROLL, FX_THEATRE, FX_SCANNER, FX_METEOR, FX_FIRE, FX_TWINKLE, FX_SPARKLE, FX_RAIN, FX_AURORA,
+  FX_HEARTBEAT, FX_STROBE, FX_CANDLE, FX_RIPPLE, FX_STACK,   // 0.7.15; added at the end, as settings keep effects by name
   FX_COUNT
 };
 static const char *FX_NAMES[FX_COUNT] = {
   "solid", "breathe", "fill", "flash", "chase", "rainbow",
   "gradient", "waves", "scroll", "theatre", "scanner", "meteor", "fire", "twinkle", "sparkle", "rain", "aurora",
+  "heartbeat", "strobe", "candle", "ripple", "stack",
 };
 
 enum State : uint8_t { ST_IDLE, ST_PRINTING, ST_PAUSED, ST_FINISHED, ST_COOLING, ST_READY, ST_ERROR, ST_OFFLINE, ST_OFF, ST_COUNT };
@@ -237,7 +239,9 @@ static const uint32_t AUTO = 0xFFFFFFFF;
 /* A constructor rather than a default on the member: this toolchain's C++11 will not brace-initialise a struct that has one. */
 struct Look {
   uint32_t colour; uint8_t effect; uint8_t speed; uint32_t colour2;
-  Look(uint32_t c = 0, uint8_t e = 0, uint8_t s = 50, uint32_t c2 = AUTO) : colour(c), effect(e), speed(s), colour2(c2) {}
+  uint8_t level;    // this state's own brightness, 1-100; 0 uses the bar's
+  uint16_t limit;   // minutes this state is shown before the bar moves on (idle and offline go dark, the rest go to idle); 0 for as long as it lasts
+  Look(uint32_t c = 0, uint8_t e = 0, uint8_t s = 50, uint32_t c2 = AUTO) : colour(c), effect(e), speed(s), colour2(c2), level(0), limit(0) {}
 };
 
 /* Idle, printing and error start close to the stock bar's own colours. */
@@ -262,8 +266,6 @@ static char order[4] = "GRB";
 static bool reversed = false;
 /* The cool-down the bar works out for itself when paired: "ready" only once this many minutes have passed AND the bed is at or below the target. A controller that pushes states makes its own decision and ignores these. */
 static uint8_t coolMinutes = 10;
-/* How long an error is shown before the bar goes back to its idle look; 0 shows it until it clears. A failed print stays "failed" on the printer until the next one starts, which kept the error flashing for hours. */
-static uint16_t errorMinutes = 0;
 static uint8_t coolTarget = 35;
 /* The two modes the stock firmware had: follow the printer, or dance to the room. */
 enum Mode : uint8_t { MODE_STATUS, MODE_MUSIC, MODE_COUNT };
@@ -374,7 +376,6 @@ static void configToJson(JsonDocument &doc) {
   doc["split"] = rgbSplit;
 #endif
   doc["cool"]["minutes"] = coolMinutes;
-  doc["error"]["minutes"] = errorMinutes;
   doc["cool"]["target"] = coolTarget;
   doc["mode"] = MODE_NAMES[mode];
   doc["music"]["sensitivity"] = SENS_NAMES[sensitivity];
@@ -387,6 +388,8 @@ static void configToJson(JsonDocument &doc) {
     one["colour2Auto"] = looks[i].colour2 == AUTO;
     one["effect"] = FX_NAMES[looks[i].effect];
     one["speed"] = looks[i].speed;
+    one["level"] = looks[i].level;
+    one["limit"] = looks[i].limit;
   }
 }
 
@@ -420,10 +423,11 @@ static const char *applyConfig(JsonVariantConst doc) {
     if (!intIn(doc["cool"]["minutes"], 0, 120, value)) return "Cool-down is 0-120 minutes";
     coolMinutes = value;
   }
+  /* 0.7.14 had this for errors alone; it is now the error look's own limit, and still taken in this form. */
   if (!doc["error"]["minutes"].isNull()) {
     int value;
     if (!intIn(doc["error"]["minutes"], 0, 1440, value)) return "An error is shown for 0-1440 minutes (0: until it clears)";
-    errorMinutes = value;
+    looks[ST_ERROR].limit = value;
   }
   if (!doc["cool"]["target"].isNull()) {
     int value;
@@ -473,6 +477,16 @@ static const char *applyConfig(JsonVariantConst doc) {
       int speed;
       if (!intIn(one["speed"], 1, 100, speed)) return "Speed is 1-100";
       looks[at].speed = speed;
+    }
+    if (!one["level"].isNull()) {
+      int level;
+      if (!intIn(one["level"], 0, 100, level)) return "A state's brightness is 1-100, or 0 for the bar's";
+      looks[at].level = level;
+    }
+    if (!one["limit"].isNull()) {
+      int limit;
+      if (!intIn(one["limit"], 0, 1440, limit)) return "A state is shown for 0-1440 minutes (0: as long as it lasts)";
+      looks[at].limit = limit;
     }
   }
   return nullptr;
@@ -1388,26 +1402,32 @@ static State shownAsTold(float &fill, Source &source) {
   return ST_OFFLINE;
 }
 
-/* When the error now showing began, 0 when none is. Kept by the loop task alone (trackError); shown() is also asked from Home Assistant's task and only reads it. */
-static volatile uint32_t errorSince = 0;
+/* The state now told and since when. Kept by the loop task alone (trackState); shown() is also asked from Home Assistant's task and only reads them. */
+static volatile uint8_t stateNow = ST_COUNT;
+static volatile uint32_t stateSince = 0;
 
-static void trackError() {
+static void trackState() {
   float fill;
   Source source;
   const State state = shownAsTold(fill, source);
   if (source == SRC_PREVIEW) return;   // a look being tried says nothing about the printer
-  if (state != ST_ERROR) { errorSince = 0; return; }
-  if (!errorSince) errorSince = millis() | 1;
+  if (state != stateNow) { stateSince = 0; stateNow = state; }
+  if (!stateSince) stateSince = millis() | 1;
 }
 
-/* The same, except that an error shown for longer than the owner wants gives way to the idle look (and an add-on, if one shows then) until it clears. A look being tried is always shown as it is. */
+/* Whether the state now told has been shown for longer than its look's limit. */
+static bool stateOverLimit(State state) {
+  const uint16_t limit = looks[state].limit;
+  const uint32_t since = stateSince;
+  return limit && stateNow == state && since && millis() - since > limit * 60000UL;
+}
+
+/* The same, except that a state shown for longer than its limit gives way: idle and offline go dark, the rest to the idle look (and an add-on, if one shows then) until the state changes. A failed print stays "failed" on the printer until the next one starts, which kept the error flashing for hours. A look being tried is always shown as it is. */
 static State shown(float &fill, Source &source) {
   const State state = shownAsTold(fill, source);
-  if (state == ST_ERROR && source != SRC_PREVIEW && errorMinutes) {
-    const uint32_t since = errorSince;
-    if (since && millis() - since > errorMinutes * 60000UL) { fill = 0; return ST_IDLE; }
-  }
-  return state;
+  if (source == SRC_PREVIEW || state >= ST_OFF || !stateOverLimit(state)) return state;
+  fill = 0;
+  return state == ST_IDLE || state == ST_OFFLINE ? ST_OFF : ST_IDLE;
 }
 
 static void hsv(float h, uint8_t &r, uint8_t &g, uint8_t &b) {
@@ -1467,6 +1487,9 @@ static void paintEffect(uint8_t effect, uint32_t colour, uint32_t colour2, uint8
   const float scroll = cyc(t * 0.07 * sd, 1), scanner = cyc(t * sd * 1.5, TAU), meteor = cyc(t * sd * 2.6, N + 14);
   const int theatre = (int)cyc(t * sd * 3, 3);
   const float aurora1 = cyc(t * sd * 0.35, TAU), aurora2 = cyc(t * sd * 0.25, TAU), auroraDrift = cyc(t * 0.02 * sd, 1);
+  const float heart = cyc(t * sd * 0.25, 1), strobe = cyc(t * sd * 0.6, 1), ripple = cyc(t * sd * 1.6, TAU), stack = cyc(t * sd * 0.12, 2);
+  static float flick[LED_COUNT];
+  static float flickAll = 1;
 
   for (int i = 0; i < N; i++) {
     float *c = fxColour[i];
@@ -1507,6 +1530,35 @@ static void paintEffect(uint8_t effect, uint32_t colour, uint32_t colour2, uint8
         k = 0.5f + 0.5f * v;
         break;
       }
+      case FX_HEARTBEAT: {
+        /* Two beats close together, then a rest: about one a second at the middle speed. */
+        auto beat = [](float x, float at) { const float d = (x - at) / 0.045f; return expf(-d * d); };
+        const float b = max(beat(heart, 0.08f), 0.7f * beat(heart, 0.28f));
+        mix(pal[1], pal[0], b, c);
+        k = sqrtf(0.04f + 0.96f * b);
+        break;
+      }
+      case FX_STROBE: {
+        const bool on = strobe < 0.12f;
+        memcpy(c, on ? pal[0] : pal[1], sizeof(float) * 3);
+        k = on ? 1 : 0;
+        break;
+      }
+      case FX_RIPPLE: {
+        /* Rings running out from the middle of the bar. */
+        const float w = 0.5f + 0.5f * sinf(fabsf(i - (N - 1) / 2.0f) * 0.9f - ripple);
+        mix(pal[1], pal[0], w, c);
+        k = 0.3f + 0.7f * w;
+        break;
+      }
+      case FX_STACK: {
+        /* The bar fills one LED after another in the first colour, then empties back into the second. */
+        const float edge = stack < 1 ? stack * N : (2 - stack) * N;
+        const float on = constrain(edge - i, 0.0f, 1.0f);
+        mix(pal[1], pal[0], on, c);
+        k = 0.35f + 0.65f * on;
+        break;
+      }
       default: break;   // the effects below are drawn for the whole bar at once
     }
   }
@@ -1525,6 +1577,17 @@ static void paintEffect(uint8_t effect, uint32_t colour, uint32_t colour2, uint8
       fxColour[i][1] = x < 1 ? 0 : x < 2 ? (x - 1) * 255 : 255;
       fxColour[i][2] = x < 2 ? 0 : (x - 2) * 255;
       fxLevel[i] = 1;
+    }
+  } else if (effect == FX_CANDLE) {
+    /* A warm flicker: the whole flame wavers, and each LED a little on its own. Between the two colours, the first at the brightest. */
+    flickAll = constrain(flickAll + (rnd() - 0.5f) * dt * s * 2.2f, 0.55f, 1.0f);
+    flickAll += (0.85f - flickAll) * min(1.0f, dt * 1.5f);
+    for (int i = 0; i < N; i++) {
+      if (flick[i] <= 0) flick[i] = 0.8f;
+      flick[i] = constrain(flick[i] + (rnd() - 0.5f) * dt * s * 1.6f, 0.5f, 1.0f);
+      const float v = constrain(flickAll * flick[i], 0.0f, 1.0f);
+      mix(pal[1], pal[0], v, fxColour[i]);
+      fxLevel[i] = v;
     }
   } else if (effect == FX_TWINKLE) {
     for (int i = 0; i < N; i++) {
@@ -1661,7 +1724,9 @@ static void render() {
   const float t = (millis() % 10000000UL) / 1000.0f;
   /* 1-100 on the page is 0.1 to 2 cycles a second. */
   const float rate = 0.1f + look.speed / 100.0f * 1.9f;
-  const float level = (schedActive() ? schedLevel : brightness) / 100.0f;
+  /* The dark spell's level wins; otherwise the state's own brightness, where it has one. Only the bar's own looks have one: a look from Home Assistant or an add-on keeps the bar's. */
+  const uint8_t ownLevel = manual || (addon && addon->kind == ADDON_LOOK) ? 0 : looks[state].level;
+  const float level = (schedActive() ? schedLevel : ownLevel ? ownLevel : brightness) / 100.0f;
   const uint8_t baseR = (look.colour >> 16) & 255, baseG = (look.colour >> 8) & 255, baseB = look.colour & 255;
   /* Meters share the bar equally, with one dark LED between neighbours so two full meters do not read as one. */
   const int meters = addon && addon->kind == ADDON_METERS ? addon->meterCount : 0;
@@ -3947,9 +4012,13 @@ static void handleHostName() {
 
 /* Changes in what the other tasks report, written to the log once a second from here, so that only this task writes it. The same fields the page shows; a line only when one changes. */
 static void logWatch() {
-  static bool errorTimedOut = false;
-  const bool timedOut = errorMinutes && errorSince && millis() - errorSince > errorMinutes * 60000UL;
-  if (timedOut != errorTimedOut) { if (timedOut) logLine("Error shown for %u min: back to the idle look until it clears", (unsigned)errorMinutes); errorTimedOut = timedOut; }
+  static bool timedOutWas = false;
+  const uint8_t told = stateNow;
+  const bool timedOut = told < ST_OFF && stateOverLimit((State)told);
+  if (timedOut != timedOutWas) {
+    if (timedOut) logLine("%s shown for %u min: %s until it changes", ST_NAMES[told], (unsigned)looks[told].limit, told == ST_IDLE || told == ST_OFFLINE ? "dark" : "idle look");
+    timedOutWas = timedOut;
+  }
   static int wifiWas = -1;
   const int wifi = WiFi.status() == WL_CONNECTED;
   if (wifi != wifiWas) {
@@ -4039,7 +4108,7 @@ void loop() {
   static uint32_t lastWatchAt = 0;
   if (millis() - lastWatchAt >= 1000) {
     lastWatchAt = millis();
-    trackError();
+    trackState();
     logWatch();
     watchTrial();
     keepOtherNames();

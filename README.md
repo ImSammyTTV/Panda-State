@@ -14,7 +14,7 @@
 
 Open replacement firmware for BIQU's Panda light boards, written for the
 **Panda Status P2**, the 25-LED light bar for Bambu Lab **P2S** and **X2D**
-printers. It does what stock does, then adds a real cool-down, seventeen
+printers. It does what stock does, then adds a real cool-down, twenty-two
 effects, add-ons, Home Assistant, Klipper, updates from GitHub and an open
 API.
 
@@ -28,7 +28,7 @@ API.
 - 🖨️ **Bambu Lab or Klipper**: follows a Bambu printer over its LAN link, or any Klipper printer through Moonraker.
 - 🏠 **Home Assistant** over MQTT: the bar appears by itself as a light with sensors, ready for automations.
 - 🌡️ **A real cool-down** after a print: the bar drains as the bed cools, then says *Ready*.
-- 🎨 **Every state restyled**: eight states, each with two colours, one of 17 effects and a speed.
+- 🎨 **Every state restyled**: eight states, each with two colours, one of 22 effects, a speed, its own brightness and a time limit.
 - 🧩 **Add-ons and a store**: the loaded filament's colour, weather, rain, UV and air quality for your town, prices, looks, animations.
 - ⬆️ **Updates from GitHub**, checked against the release's checksums, installed with one click.
 - 📶 **Its own hotspot** when Wi-Fi fails, so you can always reach it.
@@ -260,11 +260,12 @@ way: the copy can be put back any time.
   starts `PandaP2-Setup` (`PandaState-Setup` on the other boards), password `panda` + the last six hex digits of its MAC
   (the page shows it). Join it and open `http://192.168.4.1/`. It cannot be
   switched off for good.
-- **Errors that do not go on for ever.** In the Printer section, *Show a
-  printer error for* sets how many minutes an error is shown before the bar
-  goes back to its idle look (0.7.14 and later; 0, the default, shows it until
-  the printer clears it). A failed print stays "failed" on the printer until
-  the next one starts.
+- **States that do not go on for ever.** Under each state's **More**, *Show it
+  for* sets how many minutes it is shown before the bar goes back to its idle
+  look; idle and offline go dark instead (0.7.15 and later; 0, the default,
+  shows it as long as it lasts). Handy for errors: a failed print stays
+  "failed" on the printer until the next one starts. **More** also gives each
+  state its own brightness.
 - **A report for bug reports.** *Save a report* in the Firmware section
   downloads what the bar is doing, its settings and a log of recent events
   (0.7.14 and later). The log survives a restart or a crash, not a power cut.
