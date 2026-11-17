@@ -551,11 +551,11 @@ async function tick(){
   const p=s.printer;
   const pk=p.type==='klipper'?'Klipper at ':'';
   $('prstate').textContent=!p.paired?'Not paired.'
-    :p.connected?'Linked to '+pk+p.ip+(p.gcode?' · printer says '+p.gcode+(p.percent!==undefined?' '+p.percent+'%':'')+(p.bed!==undefined?' · bed '+Math.round(p.bed)+'°':'')+(p.filament?' · '+(p.filament.loaded?'':'last used ')+(p.filament.type||'filament')+' '+p.filament.colour:''):' · waiting for its first message')
+    :p.connected?'Linked to '+pk+p.ip+(p.gcode?' · printer says '+p.gcode+(p.percent!==undefined?' '+p.percent+'%':'')+(p.bed!==undefined?' · bed '+Math.round(p.bed)+'°':'')+(p.filament?' · '+(p.filament.loaded?'':'last used ')+(p.filament.type||'filament')+' '+p.filament.colour:''):' · '+(p.error||'waiting for its first message'))
     :'Paired with '+p.ip+', not linked'+(p.error?': '+p.error:'')+'.';
   if(Date.now()-busy>3000){$('bri').value=s.config.brightness;} $('briv').textContent=$('bri').value+'%';
   const o=s.otherSlot;
-  $('slots').textContent='Running from '+s.slot+' ('+s.build+')'+(s.onTrial?' · on trial until it has been on Wi-Fi for 20 s':'')+'. Other slot ('+o.label+'): '+(o.project?o.project+' '+o.version+', built '+o.built:'empty')+'.';
+  $('slots').textContent='Running from '+s.slot+' ('+s.build+')'+(s.onTrial?' · on trial until it has been on Wi-Fi for 20 s':'')+'. Other slot ('+o.label+'): '+(o.panda?'Panda State '+o.panda+(o.board!==s.board?' for another board ('+o.board+')':''):o.project?o.project+' '+o.version+', built '+o.built:'empty')+'.';
   $('other').disabled=!o.project; $('backup').disabled=!o.project;
   // A build on trial takes no new firmware: the other slot is its way back. Said on the buttons, rather than after a whole file has been sent.
   const waitTrial=s.onTrial?'This version is still on trial. It takes new firmware once it has been on Wi-Fi for 20 seconds.':'';

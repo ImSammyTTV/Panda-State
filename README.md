@@ -75,7 +75,7 @@ start-up. The updater on the bar fetches the right one for itself.
 | **Panda Status P2** | `panda-p2-custom-<v>.bin` | 25 on GPIO 5, microphone, button | ✅ Made and tested on it |
 | **Panda Status** (original) | `panda-status-custom-<v>.bin` | WS2812 strip on GPIO 5, length set on the page | 🧪 Not yet run on one |
 | **Panda Lux RGB** (PX and PX2) | `panda-lux-custom-<v>.bin` | WS2812 strip on GPIO 5, length set on the page | 🧪 Not yet run on one |
-| **Panda RGB Controller** | `panda-rgb-custom-<v>.bin` | Two 12 V RGB channels on PWM (GPIO 10/1/4 and 6/0/5) | 🧪 Not yet run on one |
+| **Panda RGB Controller** | `panda-rgb-custom-<v>.bin` | Two 12 V RGB channels on PWM (GPIO 10/1/4 and 6/0/5), colour order RGB | 🧪 Not yet run on one |
 
 The pins for the three untested boards were read out of BIQU's own firmware
 for each (the LED channel set-up in the original Panda Status V1.0.3, the Lux
@@ -240,7 +240,8 @@ into it within a few seconds, joins the same Wi-Fi and keeps its pairing.
 **Updating.** From 0.6.2 the bar updates itself: **Firmware → Check for
 updates → Install**. It refuses anything that does not match the release's
 checksums, and restarts into it on trial. *Install file* still takes a `.bin`
-you downloaded yourself. (0.6.0 and 0.6.1 could not download: install 0.6.2 or
+you downloaded yourself; from 0.7.14 it turns away a Panda State file made for
+another board before writing anything. (0.6.0 and 0.6.1 could not download: install 0.6.2 or
 later by hand once.)
 
 **Keeping stock.** Any update goes into the *other* slot, which replaces what is
