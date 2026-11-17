@@ -102,6 +102,7 @@ button.go.warn{background:#ef4444;color:#fff}
 background:linear-gradient(160deg,color-mix(in srgb,var(--c) var(--tint),var(--cardA)),var(--cardB) 70%);border:1px solid color-mix(in srgb,var(--c) 18%,var(--line))}
 .st:hover{background:color-mix(in srgb,var(--c) 14%,var(--card))}
 .st .l{font-size:11.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--t3);font-weight:600}
+.st .s{font-size:12px;color:var(--t2)}
 .st .v{font-size:14.5px;font-weight:600;color:var(--text);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 #rows{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
 .stc{display:flex;flex-direction:column;gap:10px;padding:14px 16px;border-radius:20px;background:rgba(var(--ink),.045);border:1px solid var(--line);min-width:0}
@@ -147,7 +148,7 @@ background:color-mix(in srgb,var(--bg) 88%,transparent);backdrop-filter:blur(14p
 </section>
 
 <nav class="stat" aria-label="How things are">
-  <button class="st" data-go="fold-printer"><span class="l">Printer</span><span class="v" id="st-pr">…</span></button>
+  <button class="st" data-go="fold-printer"><span class="l">Printer</span><span class="v" id="st-pr">…</span><span class="s" id="st-prs"></span></button>
   <button class="st" data-go="fold-wifi"><span class="l">Wi-Fi</span><span class="v" id="st-wifi">…</span></button>
   <button class="st" data-go="fold-fw"><span class="l">Firmware</span><span class="v" id="st-fw">…</span></button>
   <button class="st" data-go="fold-ha"><span class="l">Home Assistant</span><span class="v" id="st-ha">…</span></button>
@@ -649,7 +650,9 @@ async function tick(){
   $('hatitle').textContent=!h.on?'Off':h.connected?'Connected to '+h.host:'Not connected'+(h.error?': '+h.error:'');
   $('hasub').textContent=h.on?(h.connected?'Discovery prefix '+h.prefix+' · device topics under '+h.topic+(h.manual?' · Home Assistant has the light':''):'Broker '+h.host+':'+h.port):'Turn on, give the broker address (and user and password if it has them), and the bar appears under MQTT devices.';
   $('hasum').textContent=$('hatitle').textContent;
-  $('st-pr').textContent=$('prsum').textContent||'Not paired'; $('st-wifi').textContent=$('wifisum').textContent; $('st-fw').textContent=$('fwsum').textContent; $('st-ha').textContent=$('hasum').textContent;
+  /* Which printer, not what it is saying: its state and any error are in the Printer section. */
+  {const p=s.printer||{},on=p.paired&&p.ip;$('st-pr').textContent=on?(p.type==='klipper'?'Klipper':'Bambu Lab'):'Not paired';
+   $('st-prs').textContent=on?p.ip+' · '+(p.connected?'linked':'not linked'):'';} $('st-wifi').textContent=$('wifisum').textContent; $('st-fw').textContent=$('fwsum').textContent; $('st-ha').textContent=$('hasum').textContent;
   if(Date.now()-busy>3000&&haOn!==h.on){haOn=h.on;paintHa();}
 }
 /* Which sections are open, remembered by this browser. */
