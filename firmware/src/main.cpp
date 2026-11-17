@@ -51,7 +51,7 @@
 
 /* What the firmware calls itself on its page and in /api/status. Plain and generic, so it says what it is on anyone's network. */
 #define FW_NAME "panda"
-#define FW_VERSION "0.7.13"
+#define FW_VERSION "0.7.14"
 /* Where new releases and the add-on store live. A release must carry a
    panda-<board>-custom-<version>.bin for each board and a SHA256SUMS.txt that lists them. */
 #define UPDATE_REPO "ImSammyTTV/Panda-State"
@@ -899,7 +899,7 @@ static void printerTask(void *) {
     bool reported = false;
     while (!prRestart) {
       /* The printer takes the sign-in with any serial number, and the subscription to a wrong one simply never delivers: the page said "waiting for its first message" for ever. A pushall is answered at once, so a long silence means the serial. */
-      if (!reported && !prError[0] && millis() - linkedAt > 20000) prSetError("No reports from the printer: check its serial number");
+      if (!reported && !prError[0] && millis() - linkedAt > 20000) prSetError("No reports: check the printer's serial");
       /* Every 10 s rather than every 30: an answer to one is what keeps a quiet printer's last report counted as current (below). */
       if (millis() - lastPing > 10000) { const uint8_t ping[2] = {0xC0, 0}; net.write(ping, 2); lastPing = millis(); }
       if (millis() - lastHeard > 90000) break;
@@ -914,8 +914,8 @@ static void printerTask(void *) {
       } while ((buf[0] & 0x80) && shift < 28);
       if (!ok) break;
       lastHeard = millis();
-      /* PINGRESP. Some printers report only what changes, and a cold idle one can say nothing for minutes: its last report stays true while it still answers, so it is not shown as offline after 30 s. Only once a real report has come. */
-      if ((head >> 4) == 13 && prLastMsgAt) prLastMsgAt = millis();
+      /* PINGRESP. Some printers report only what changes, and a cold idle one can say nothing for minutes: its last report stays true while it still answers, so it is not shown as offline after 30 s. Only once this link has had a real report. */
+      if ((head >> 4) == 13 && reported) prLastMsgAt = millis();   // this link's own report, not one left from before a reconnect: a print that ended meanwhile would otherwise stay "printing"
       if ((head >> 4) != 3) { if (!netSkip(net, length, buf, sizeof buf)) break; continue; }
       /* PUBLISH: topic, then (QoS above 0 only) a packet id, then the JSON. */
       if (length < 2 || !netRead(net, buf, 2, 5000)) break;
@@ -1737,11 +1737,10 @@ static void imageTag(const uint8_t *data, size_t length, char *board, size_t boa
     if (memcmp(data + at, PANDA_BOARD_TAG, BOARD_TAG_PREFIX)) continue;
     size_t i = 0, j = at + BOARD_TAG_PREFIX;
     for (; j < look && data[j] != ';'; j++) {
-      if (!islower(data[j]) && !isdigit(data[j])) return;
-      if (i + 1 >= boardSize) return;
+      if ((!islower(data[j]) && !isdigit(data[j])) || i + 1 >= boardSize) { board[0] = 0; return; }   // not a tag after all
       board[i++] = (char)data[j];
     }
-    if (j >= look || !i) return;   // no ";": not a tag after all
+    if (j >= look || !i) { board[0] = 0; return; }   // no ";": not a tag after all
     board[i] = 0;
     for (i = 0, j++; j < look && data[j] && data[j] >= ' ' && i + 1 < buildSize; j++) build[i++] = (char)data[j];
     build[i] = 0;
@@ -1909,11 +1908,13 @@ static void sendResult(bool ok, const char *message = nullptr) {
 
 static bool readBody(JsonDocument &doc) {
   /* The largest the page sends is an add-on file with its address, at most 12,000 characters. The web server has already taken the whole body by now, so this only keeps a huge one from being parsed as well, but that is most of the memory it would cost. */
-  if (server.hasArg("plain") && server.arg("plain").length() > 16384) {
+  if (!server.hasArg("plain")) { sendResult(false, "Body must be JSON"); return false; }
+  const String body = server.arg("plain");   // a copy either way: taken once
+  if (body.length() > 16384) {
     sendResult(false, "That is far bigger than anything the bar takes");
     return false;
   }
-  if (!server.hasArg("plain") || deserializeJson(doc, server.arg("plain"))) {
+  if (deserializeJson(doc, body)) {
     sendResult(false, "Body must be JSON");
     return false;
   }
@@ -2610,7 +2611,8 @@ struct Fetch {
       }
       if (code != 301 && code != 302 && code != 303 && code != 307 && code != 308) return code;
       String next = http.header("Location");
-      if (next.startsWith("/")) next = String(secure ? "https://" : "http://") + host + next;   // a path on the same server
+      if (next.startsWith("//")) next = String(secure ? "https:" : "http:") + next;   // another server, same scheme
+      else if (next.startsWith("/")) next = String(secure ? "https://" : "http://") + host + next;   // a path on the same server
       /* Never from a secure connection to a plain one: what came back over it could not be trusted. It shows as the redirect it was. */
       if (!next.length() || (secure && !next.startsWith("https://"))) return code;
       url = next;
@@ -2624,6 +2626,8 @@ struct Fetch {
     CappedString got(cap);
     if (size > 0) got.reserve(size + 1);
     const int result = http.writeToStream(&got);
+    /* The client gives the same error for a reader that would take no more and for an answer cut short, so it is "too big" only if the ceiling was what stopped it. */
+    if (result == HTTPC_ERROR_STREAM_WRITE && got.length() + HTTP_TCP_BUFFER_SIZE < cap) return HTTPC_ERROR_CONNECTION_LOST;
     if (result < 0) return result;
     out = std::move(static_cast<String &>(got));
     return 0;
@@ -2671,7 +2675,7 @@ static bool updCheck() {
   filter["assets"][0]["name"] = true;
   filter["assets"][0]["browser_download_url"] = true;
   String answer;
-  const int got = f.body(answer, 49152);
+  const int got = f.body(answer, 60000);   // about 14 KB today; a String holds at most 64 KB
   if (got < 0) { updMessage = got == HTTPC_ERROR_STREAM_WRITE ? String("GitHub's answer was too big to read") : f.error(got); updPhase = UPD_FAILED; return false; }
   JsonDocument doc;
   if (deserializeJson(doc, answer, DeserializationOption::Filter(filter))) { updMessage = "GitHub's answer could not be read"; updPhase = UPD_FAILED; return false; }
@@ -3288,6 +3292,12 @@ static void handleAddonFile() {
   if (!doc["url"].isNull()) {
     const String url = doc["url"] | "";
     if (!url.startsWith("https://") || url.length() > 300) return sendResult(false, "The add-on's address must start with https://");
+    /* The copy the page hands over is checked like an upload, before the add-on there now is let go. (One fetched by the bar itself is checked when it arrives.) */
+    if (!doc["file"].isNull()) {
+      String text;
+      serializeJson(doc["file"], text);
+      if (const char *bad = faCheck(text)) return sendResult(false, bad);
+    }
     prefs.putString("faurl", url);
     prefs.remove("fajson");
     faInline = "";
