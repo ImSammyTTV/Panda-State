@@ -1,7 +1,9 @@
 /* The bar's own page. One file, and nothing it needs comes from elsewhere: it
    has to work from the setup network, where there is no internet. The add-on
    store is the one exception, and it is optional: it reads a folder on GitHub
-   only when opened. Dark glass cards, sized for a phone as much as a desktop. */
+   only when opened. Dark glass cards, sized for a phone as much as a desktop:
+   the live bar first, tiles for the rest, a card per state, and on a phone a
+   tab bar along the bottom (0.7.16). */
 #pragma once
 #include <Arduino.h>
 
@@ -91,6 +93,39 @@ button.go.warn{background:#ef4444;color:#fff}
 @keyframes fadein{from{opacity:0}to{opacity:1}}
 .tog{display:inline-flex;align-items:center;gap:8px;font-size:13px;color:var(--t2)}
 [hidden]{display:none!important}
+/* 0.7.16 layout: the live bar is the first thing on the page, four tiles say how everything else is, and each state is a card with its own picture. */
+.kick{font-size:13px;color:var(--t2);margin-top:18px}.kick+.big{margin-top:2px}
+#now .bar{grid-template-columns:repeat(25,minmax(0,1fr));gap:6px;padding:16px;margin-top:18px;border-radius:22px;background:#05070b;border-color:rgba(255,255,255,.06)}
+#now .bar i{height:34px;border-radius:8px;background:#0d1117;box-shadow:0 0 18px -3px currentColor}
+.stat{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.st{height:auto;min-height:88px;display:flex;flex-direction:column;align-items:flex-start;justify-content:center;gap:4px;padding:14px 16px;border-radius:20px;text-align:left;white-space:normal;
+background:linear-gradient(160deg,color-mix(in srgb,var(--c) var(--tint),var(--cardA)),var(--cardB) 70%);border:1px solid color-mix(in srgb,var(--c) 18%,var(--line))}
+.st:hover{background:color-mix(in srgb,var(--c) 14%,var(--card))}
+.st .l{font-size:11.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--t3);font-weight:600}
+.st .s{font-size:12px;color:var(--t2)}
+.st .v{font-size:14.5px;font-weight:600;color:var(--text);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+#rows{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.stc{display:flex;flex-direction:column;gap:10px;padding:14px 16px;border-radius:20px;background:rgba(var(--ink),.045);border:1px solid var(--line);min-width:0}
+.stc .top{display:flex;align-items:baseline;gap:8px}.stc .top b{font-size:15px;text-transform:capitalize}.stc .top .sub{margin-left:auto;text-align:right}
+.stc .sw{height:12px;gap:3px}.stc .sw i{border-radius:3px}
+.stc .ctl{display:grid;grid-template-columns:44px 44px minmax(0,1fr) auto;gap:8px;align-items:center}
+.stc .spdl{display:flex;align-items:center;gap:10px}.stc .spdl label{font-size:12.5px;color:var(--t3);flex:none}
+.badges{display:flex;flex-wrap:wrap;gap:6px}.badges span{padding:2px 9px;border-radius:999px;font-size:12px;color:var(--t2);background:rgba(var(--ink),.07)}
+.stc .rowmore{padding:0;font-size:13px;color:var(--t2)}.stc .rowmore select{width:auto}
+.tabbar{display:none}
+@media(max-width:700px){.stat{grid-template-columns:repeat(2,minmax(0,1fr))}#rows{grid-template-columns:minmax(0,1fr)}}
+/* A phone: the page as one column, a tab bar to jump between the parts people use most, and controls a thumb can hit. */
+@media(max-width:560px){
+main{padding-bottom:104px}
+#now .bar{gap:3px;padding:12px}#now .bar i{height:24px;border-radius:5px}
+#moderow button{flex:1;height:44px}
+.stc .ctl{grid-template-columns:44px 44px minmax(0,1fr)}.stc .ctl .acts{grid-column:1/-1}.stc .ctl .acts button{flex:1;height:40px}
+.tabbar{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));position:fixed;left:0;right:0;bottom:0;z-index:40;height:68px;padding-bottom:env(safe-area-inset-bottom);
+background:color-mix(in srgb,var(--bg) 88%,transparent);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border-top:1px solid var(--line)}
+.tabbar button{height:100%;border-radius:0;background:none;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;font-size:12px;color:var(--t2)}
+.tabbar button::before{content:'';width:22px;height:3px;border-radius:2px;background:transparent}
+.tabbar button[aria-current]{color:var(--text)}.tabbar button[aria-current]::before{background:var(--c)}
+}
 /* On a phone the board name, address and signal no longer fit beside the title and the theme switch: they take their own line underneath. */
 @media(max-width:560px){.tiles .tile.wide{flex-direction:column;align-items:stretch;gap:8px}}
 @media(max-width:560px){.head{flex-wrap:wrap;row-gap:6px}.head b{white-space:nowrap}.thm{margin-left:auto}.head .more{order:3;flex-basis:100%;margin-left:0}}
@@ -101,6 +136,7 @@ button.go.warn{background:#ef4444;color:#fff}
 
 <section class="card" id="now">
   <div class="head"><b>Panda State</b><span class="chip" id="fw">…</span><span class="more"><span id="net"></span><span class="sig" id="sig" title="Wi-Fi signal"><i></i><i></i><i></i><i></i></span></span><button class="thm" id="thm"></button></div>
+  <div class="kick">On the bar now</div>
   <div class="big" id="state">…</div>
   <div class="sub" id="said"></div>
   <div class="bar" id="bar"></div>
@@ -110,6 +146,13 @@ button.go.warn{background:#ef4444;color:#fff}
     <span class="sub" id="mic"></span></div>
   <div class="sub" id="btnhelp" style="margin-top:10px">Button on the bar: press once for the next Music sensitivity, twice to switch mode, hold five seconds for the setup Wi-Fi network.</div>
 </section>
+
+<nav class="stat" aria-label="How things are">
+  <button class="st" data-go="fold-printer"><span class="l">Printer</span><span class="v" id="st-pr">…</span><span class="s" id="st-prs"></span></button>
+  <button class="st" data-go="fold-wifi"><span class="l">Wi-Fi</span><span class="v" id="st-wifi">…</span></button>
+  <button class="st" data-go="fold-fw"><span class="l">Firmware</span><span class="v" id="st-fw">…</span></button>
+  <button class="st" data-go="fold-ha"><span class="l">Home Assistant</span><span class="v" id="st-ha">…</span></button>
+</nav>
 
 <details class="card" id="fold-looks">
   <summary><h2>What each state looks like</h2><span class="sum" id="lookssum"></span><i class="chev"></i></summary>
@@ -194,6 +237,9 @@ button.go.warn{background:#ef4444;color:#fff}
 </details>
 
 </main>
+<nav class="tabbar" aria-label="Parts of the page">
+  <button data-go="now" aria-current="page">Bar</button><button data-go="fold-looks">Looks</button><button data-go="fold-addons">Add-ons</button><button data-go="fold-printer">Printer</button>
+</nav>
 <div class="modal" id="modal" hidden><div class="sheet" role="dialog" aria-modal="true" aria-labelledby="mtitle">
   <h3 id="mtitle"></h3><div class="sub" id="msub"></div><div id="mbody"></div>
   <div class="prog" id="mprog" hidden><i></i></div><div class="msg" id="mmsg"></div>
@@ -210,9 +256,10 @@ function build(s){
   built=true;
   $('rows').innerHTML='';
   for(const name of STATES){
-    const look=s.config.states[name]; const row=document.createElement('div'); row.className='row';
-    row.innerHTML='<span>'+name+'</span><input type="color" title="Colour"><input type="color" title="Second colour, for the two-colour effects"><select></select><input class="spd" type="range" min="1" max="100" title="Speed"><span class="acts"><button>Try</button><button title="More for this state: its own brightness, and how long it is shown">More</button></span>';
-    const [,colour,colour2,effect,speed,acts]=row.children; const [tryIt,moreBtn]=acts.children;
+    const look=s.config.states[name]; const card=document.createElement('div'); card.className='stc';
+    card.innerHTML='<div class="top"><b>'+name+'</b><span class="sub"></span></div><div class="sw"></div><div class="ctl"><input type="color" title="Colour" aria-label="'+name+' colour"><input type="color" title="Second colour, for the two-colour effects" aria-label="'+name+' second colour"><select aria-label="'+name+' effect"></select><span class="acts"><button>Try</button><button title="More for this state: its own brightness, and how long it is shown">More</button></span></div><div class="spdl"><label>Speed</label><input class="spd" type="range" min="1" max="100" aria-label="'+name+' speed"></div><div class="badges"><span></span><span></span></div>';
+    const [top,sw,ctl,spdl,badges]=card.children; const [colour,colour2,effect,acts]=ctl.children; const [tryIt,moreBtn]=acts.children; const speed=spdl.children[1];
+    for(let i=0;i<25;i++) sw.appendChild(document.createElement('i'));
     /* The rest of a state's options, folded away under its row. */
     const more=document.createElement('div'); more.className='rowmore'; more.hidden=true;
     const goesTo=name==='idle'||name==='offline'?'go dark':'go back to the idle look';
@@ -227,11 +274,16 @@ function build(s){
     for(const fx of s.effects){const o=document.createElement('option');o.value=o.textContent=fx;effect.appendChild(o);} effect.value=look.effect;
     /* The second colour is only sent when it is the one changed, so an untouched one keeps following the first. */
     /* Only the control that changed is sent: a page left open would otherwise write its old colour and effect back over ones set since from somewhere else. */
-    const save=async(one)=>{busy=Date.now();const r=await post('/api/config',{states:{[name]:one}});$('cfgmsg').textContent=r.ok?'Saved':(r.message||'Not saved');};
+    /* The card's picture and badges, from its own controls, so they follow an edit at once. */
+    const paint=()=>{lookStrip(sw,effect.value,colour.value,colour2.value);top.children[1].textContent=effect.value+' · speed '+speed.value;
+      badges.children[0].textContent=+level.value?level.value+'% brightness':"bar's brightness";
+      badges.children[1].textContent=+limit.value?(limit.value>=60&&limit.value%60===0?limit.value/60+' h':limit.value+' min')+' → '+(name==='idle'||name==='offline'?'dark':'idle'):'as long as it lasts';};
+    const save=async(one)=>{busy=Date.now();paint();const r=await post('/api/config',{states:{[name]:one}});$('cfgmsg').textContent=r.ok?'Saved':(r.message||'Not saved');};
     colour.onchange=()=>save({colour:colour.value}); effect.onchange=()=>save({effect:effect.value}); speed.onchange=()=>save({speed:+speed.value}); colour2.onchange=()=>save({colour2:colour2.value});
     level.onchange=()=>save({level:+level.value}); limit.onchange=()=>save({limit:+limit.value});
     tryIt.onclick=()=>post('/api/preview',{state:name,progress:60,seconds:8});
-    $('rows').appendChild(row); $('rows').appendChild(more);
+    speed.oninput=paint; colour.oninput=paint; colour2.oninput=paint;
+    card.appendChild(more); $('rows').appendChild(card); paint();
   }
   for(const o of ['GRB','RGB','BRG','BGR','RBG','GBR']){const e=document.createElement('option');e.value=e.textContent=o;$('order').appendChild(e);}
   $('order').value=s.config.order; $('rev').checked=s.config.reversed; $('bri').value=s.config.brightness;
@@ -255,6 +307,12 @@ function build(s){
 }
 /* Time zones as the rule strings the bar's clock understands (they carry the daylight-saving dates). The browser's own zone is picked if it is in the list; otherwise its current offset is offered, which will not follow daylight saving. */
 const ZONES={'UTC':'UTC0','Australia/Melbourne':'AEST-10AEDT,M10.1.0,M4.1.0/3','Australia/Sydney':'AEST-10AEDT,M10.1.0,M4.1.0/3','Australia/Hobart':'AEST-10AEDT,M10.1.0,M4.1.0/3','Australia/Brisbane':'AEST-10','Australia/Adelaide':'ACST-9:30ACDT,M10.1.0,M4.1.0/3','Australia/Darwin':'ACST-9:30','Australia/Perth':'AWST-8','Pacific/Auckland':'NZST-12NZDT,M9.5.0,M4.1.0/3','Asia/Tokyo':'JST-9','Asia/Seoul':'KST-9','Asia/Shanghai':'CST-8','Asia/Hong_Kong':'HKT-8','Asia/Singapore':'<+08>-8','Asia/Kolkata':'IST-5:30','Asia/Dubai':'<+04>-4','Europe/London':'GMT0BST,M3.5.0/1,M10.5.0','Europe/Dublin':'GMT0IST,M3.5.0/1,M10.5.0','Europe/Lisbon':'WET0WEST,M3.5.0/1,M10.5.0','Europe/Paris':'CET-1CEST,M3.5.0,M10.5.0/3','Europe/Berlin':'CET-1CEST,M3.5.0,M10.5.0/3','Europe/Amsterdam':'CET-1CEST,M3.5.0,M10.5.0/3','Europe/Madrid':'CET-1CEST,M3.5.0,M10.5.0/3','Europe/Rome':'CET-1CEST,M3.5.0,M10.5.0/3','Europe/Stockholm':'CET-1CEST,M3.5.0,M10.5.0/3','Europe/Warsaw':'CET-1CEST,M3.5.0,M10.5.0/3','Europe/Helsinki':'EET-2EEST,M3.5.0/3,M10.5.0/4','Europe/Athens':'EET-2EEST,M3.5.0/3,M10.5.0/4','America/New_York':'EST5EDT,M3.2.0,M11.1.0','America/Toronto':'EST5EDT,M3.2.0,M11.1.0','America/Chicago':'CST6CDT,M3.2.0,M11.1.0','America/Denver':'MST7MDT,M3.2.0,M11.1.0','America/Phoenix':'MST7','America/Los_Angeles':'PST8PDT,M3.2.0,M11.1.0','America/Vancouver':'PST8PDT,M3.2.0,M11.1.0','America/Anchorage':'AKST9AKDT,M3.2.0,M11.1.0','Pacific/Honolulu':'HST10','America/Sao_Paulo':'<-03>3'};
+/* A still of an effect in two colours, for a state's card: not the bar's drawing, just enough to tell them apart. */
+function lookStrip(sw,fx,a,b){const dim='#1a2029',hue=i=>'hsl('+Math.round(i*14.4)+',90%,58%)';
+  const at={solid:()=>a,breathe:i=>i%4<2?a:b,fill:i=>i<15?a:dim,flash:()=>a,chase:i=>i%8<2?a:dim,rainbow:hue,gradient:i=>i<12?a:b,waves:i=>i%5<3?a:b,scroll:i=>i%6<3?a:b,
+    theatre:i=>i%3===0?a:b,scanner:i=>i>9&&i<15?a:dim,meteor:i=>i<9?(i>5?a:b):dim,fire:i=>['#ffe08a','#ffb347','#ff7a1a','#e53b10','#8a1b08','#3a0b04'][Math.min(5,Math.floor(i/4))],
+    twinkle:i=>i%5===1?a:dim,sparkle:i=>i%4===2?'#ffffff':a,rain:i=>i%6===4?a:dim,aurora:i=>i%6<3?a:b,heartbeat:i=>i<12?a:b,strobe:i=>i%2?a:dim,candle:i=>i%3?a:b,ripple:i=>Math.abs(i-12)%4<2?a:b,stack:i=>i<10?a:b};
+  const f=at[fx]||(()=>a);[...sw.children].forEach((el,i)=>{el.style.background=f(i);});}
 const myZone=(()=>{try{return Intl.DateTimeFormat().resolvedOptions().timeZone;}catch(e){return '';}})();
 function fixedZone(){const m=-new Date().getTimezoneOffset(),h=Math.trunc(Math.abs(m)/60),mm=Math.abs(m)%60;const label='UTC'+(m<0?'-':'+')+h+(mm?':'+String(mm).padStart(2,'0'):'');return [label+' (no daylight saving)','<'+(m<0?'-':'+')+String(h).padStart(2,'0')+(mm?String(mm).padStart(2,'0'):'')+'>'+(m<0?'':'-')+h+(mm?':'+String(mm).padStart(2,'0'):'')];}
 let schedOn=false;
@@ -273,14 +331,14 @@ function renderAddons(s){
   if(f.from||f.loading||f.error){
     const posted=s.addons.find(a=>a.id===f.id);
     tiles.push({id:f.id,name:f.name||(f.loading?'Loading…':'Add-on file'),desc:f.error||f.description,tag:'',
-      sub:[f.kind!=='none'?f.kind:'',f.value!==undefined?'reads '+(+f.value).toPrecision(4):'',f.author?'by '+f.author:''].filter(Boolean).join(' · '),live:posted&&posted.fresh,bad:!!f.error,file:true});
+      sub:[f.kind!=='none'?f.kind:'',f.kind==='maintenance'&&f.value!==undefined?(+f.value).toFixed(1)+' of '+f.every+' print hours'+(f.due?' · due now':''):f.value!==undefined?'reads '+Math.round(+f.value*10)/10+(f.unit?' '+f.unit:''):'',f.author?'by '+f.author:''].filter(Boolean).join(' · '),live:posted&&posted.fresh,bad:!!f.error,file:true,maint:f.kind==='maintenance'});
   }
   for(const a of s.addons){if(f.from&&a.id===f.id)continue;tiles.push({id:a.id,name:a.name,tag:'program',sub:a.kind+' · '+(a.fresh?'posted '+a.age+' s ago':'stopped posting'),live:a.fresh});}
   /* Picked but nothing is running it: replaced by another add-on file, or a program that stopped. Said plainly, with a way out. */
   if(want&&!tiles.some(t=>t.id===want))tiles.push({id:want,name:want,desc:'Picked, but nothing is running it now: it was replaced, or the program that posted it has stopped. Use it again from the store, or clear it.',tag:'not running',bad:true,missing:true});
   const html=tiles.length?tiles.map(t=>'<div class="tile'+(tiles.length===1?' wide':'')+'"'+(t.id&&t.id===want?' data-on':'')+'><div class="body"><div class="t"><i class="dot"'+(t.live?' data-live':'')+(t.bad?' data-bad':'')+'></i><span>'+esc(t.name)+'</span>'+(t.tag?'<em class="tag">'+t.tag+'</em>':'')+'</div>'
     +(t.desc?'<div class="d">'+esc(t.desc)+'</div>':'')+'<div class="sub">'+esc(t.sub||'')+(s.addonShowing&&s.addonShowing===t.id?' · on the bar now':'')+'</div></div>'
-    +'<div class="acts">'+(t.missing?'<button data-pick="">Clear</button>':t.id?(t.id===want?'<button class="go" disabled>Picked</button>':'<button data-pick="'+esc(t.id)+'">Show this</button>'):'')+(t.file?'<button data-remove="1">Remove</button>':'')+'</div></div>').join('')
+    +'<div class="acts">'+(t.missing?'<button data-pick="">Clear</button>':t.id?(t.id===want?'<button class="go" disabled>Picked</button>':'<button data-pick="'+esc(t.id)+'">Show this</button>'):'')+(t.maint?'<button data-maint="1" title="Start counting the print hours again">Done</button>':'')+(t.file?'<button data-remove="1">Remove</button>':'')+'</div></div>').join('')
     :'<div class="empty">Nothing yet. Pick one from the store below, or upload a file of your own.</div>';
   if(html!==window.adHtml){window.adHtml=html;$('adtiles').innerHTML=html;}
   $('adnone').hidden=!want;
@@ -289,6 +347,7 @@ function renderAddons(s){
   $('adsum').textContent=on?on.name+(s.addonShowing===on.id?' · on the bar now':''):'None picked';
 }
 $('adtiles').onclick=async(e)=>{const b=e.target.closest('button');if(!b)return;if(b.dataset.pick!==undefined)pick(b.dataset.pick);
+  if(b.dataset.maint){const r=await post('/api/addonfile',{maintenanceDone:true});$('admsg').textContent=r.message||(r.ok?'Done':'Not saved');return;}
   if(b.dataset.remove){const card=b.closest('.tile'),name=card?card.querySelector('.t span').textContent:'this add-on';
     ask({title:'Remove '+name+'?',sub:'It comes off the bar. You can add it again from the store any time.',ok:'Remove',
       act:async()=>{const r=await post('/api/addonfile',{remove:true});if(!r.ok)throw new Error(r.message||'The bar did not remove it');$('admsg').textContent='';}});}};
@@ -592,6 +651,9 @@ async function tick(){
   $('hatitle').textContent=!h.on?'Off':h.connected?'Connected to '+h.host:'Not connected'+(h.error?': '+h.error:'');
   $('hasub').textContent=h.on?(h.connected?'Discovery prefix '+h.prefix+' · device topics under '+h.topic+(h.manual?' · Home Assistant has the light':''):'Broker '+h.host+':'+h.port):'Turn on, give the broker address (and user and password if it has them), and the bar appears under MQTT devices.';
   $('hasum').textContent=$('hatitle').textContent;
+  /* Which printer, not what it is saying: its state and any error are in the Printer section. */
+  {const p=s.printer||{},on=p.paired&&p.ip;$('st-pr').textContent=on?(p.type==='klipper'?'Klipper':'Bambu Lab'):'Not paired';
+   $('st-prs').textContent=on?p.ip+' · '+(p.connected?'linked':'not linked'):'';} $('st-wifi').textContent=$('wifisum').textContent; $('st-fw').textContent=$('fwsum').textContent; $('st-ha').textContent=$('hasum').textContent;
   if(Date.now()-busy>3000&&haOn!==h.on){haOn=h.on;paintHa();}
 }
 /* Which sections are open, remembered by this browser. */
@@ -611,12 +673,15 @@ $('thm').onclick=()=>{const now=document.documentElement.dataset.theme||'auto',n
 paintTheme();
 tick(); setInterval(tick,1000);
 /* The live picture: its own small request five times a second, each LED fading to the next reading (CSS transition) so effects move smoothly instead of jumping once a second. One request at a time, so a slow bar is never queued up. */
+/* The tiles and the phone's tab bar open the part they name and bring it into view. */
+document.querySelectorAll('[data-go]').forEach(b=>b.addEventListener('click',()=>{const t=$(b.dataset.go);if(!t)return;if(t.tagName==='DETAILS')t.open=true;t.scrollIntoView({behavior:'smooth',block:'start'});
+  if(b.closest('.tabbar'))document.querySelectorAll('.tabbar button').forEach(x=>{if(x===b)x.setAttribute('aria-current','page');else x.removeAttribute('aria-current');});}));
 let framing=false;
 async function frameTick(){
   if(framing||document.hidden)return; framing=true;
   /* Given up on after two seconds: a bar that restarts mid-request never answers it, and the picture would stay still until the browser gave up, which can be minutes. */
   const stop=new AbortController(),giveUp=setTimeout(()=>stop.abort(),2000);
-  try{const hex=await fetch('/api/frame',{signal:stop.signal}).then(r=>r.text());if(hex.length===150)[...bar.children].forEach((el,i)=>{el.style.backgroundColor='#'+hex.substr(i*6,6);});}catch(e){}
+  try{const hex=await fetch('/api/frame',{signal:stop.signal}).then(r=>r.text());if(hex.length===150)[...bar.children].forEach((el,i)=>{const c='#'+hex.substr(i*6,6);el.style.backgroundColor=c;el.style.color=c;});}catch(e){}
   clearTimeout(giveUp);
   framing=false;
 }

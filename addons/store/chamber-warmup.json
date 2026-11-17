@@ -1,0 +1,12 @@
+{
+    "id": "chamber",
+    "name": "Chamber warm-up",
+    "description": "For ABS and ASA: during a print the bar fills as the enclosed printer's chamber warms from 20 to 45 °C. Only printers that report their chamber temperature.",
+    "author": "Sam",
+    "printer": {
+        "show": "chamber",
+        "colour": "#EF4444",
+        "min": 20,
+        "max": 45
+    }
+}

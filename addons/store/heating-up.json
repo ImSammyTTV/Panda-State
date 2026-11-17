@@ -1,0 +1,10 @@
+{
+    "id": "heating",
+    "name": "Heating up",
+    "description": "While the printer preheats, the bar fills as the nozzle and bed reach their temperatures (whichever is slower), so you can see from across the room when it is about to start.",
+    "author": "Sam",
+    "printer": {
+        "show": "heating",
+        "colour": "#F97316"
+    }
+}

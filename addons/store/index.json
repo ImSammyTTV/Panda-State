@@ -10,6 +10,54 @@
                        "preview":  "FEC600FEC600FEC600FEC600FEC600FEC600FEC600FEC600FEC600FEC600FEC600FEC600FEC600FEC600FEC600FEC600FEC600FEC600FEC600FEC600FEC600FEC600FEC600FEC600FEC600"
                    },
                    {
+                       "file":  "filament-left.json",
+                       "name":  "Filament left",
+                       "description":  "How much is left on the loaded spool, in the filament's own colour. Bambu spools with their tag, on Bambu printers.",
+                       "author":  "Sam",
+                       "kind":  "printer",
+                       "preview":  "E5E7EBE5E7EBE5E7EBE5E7EBE5E7EBE5E7EBE5E7EBE5E7EBE5E7EBE5E7EBE5E7EBE5E7EBE5E7EBE5E7EBE5E7EBE5E7EBE5E7EBE5E7EB111418111418111418111418111418111418111418"
+                   },
+                   {
+                       "file":  "ams-dryness.json",
+                       "name":  "AMS dryness",
+                       "description":  "How damp your AMS is: green is dry, red means change the desiccant. Bambu printers with an AMS.",
+                       "author":  "Sam",
+                       "kind":  "printer",
+                       "preview":  "22C55E22C55E22C55E22C55E22C55E22C55E22C55E22C55E111418111418111418111418111418111418111418111418111418111418111418111418111418111418111418111418111418"
+                   },
+                   {
+                       "file":  "time-left.json",
+                       "name":  "Time left",
+                       "description":  "The bar drains as the print's time estimate counts down. Shows during prints.",
+                       "author":  "Sam",
+                       "kind":  "printer",
+                       "preview":  "3B82F63B82F63B82F63B82F63B82F63B82F63B82F63B82F63B82F63B82F63B82F63B82F63B82F63B82F6111418111418111418111418111418111418111418111418111418111418111418"
+                   },
+                   {
+                       "file":  "heating-up.json",
+                       "name":  "Heating up",
+                       "description":  "The bar fills as the nozzle and bed reach temperature before a print.",
+                       "author":  "Sam",
+                       "kind":  "printer",
+                       "preview":  "F97316F97316F97316F97316F97316F97316F97316F97316F97316F97316F97316111418111418111418111418111418111418111418111418111418111418111418111418111418111418"
+                   },
+                   {
+                       "file":  "chamber-warmup.json",
+                       "name":  "Chamber warm-up",
+                       "description":  "For ABS and ASA: the bar fills as an enclosed printer's chamber warms up.",
+                       "author":  "Sam",
+                       "kind":  "printer",
+                       "preview":  "EF4444EF4444EF4444EF4444EF4444EF4444EF4444EF4444EF4444EF4444EF4444EF4444EF4444EF4444EF4444EF4444111418111418111418111418111418111418111418111418111418"
+                   },
+                   {
+                       "file":  "maintenance.json",
+                       "name":  "Maintenance reminder",
+                       "description":  "After 200 print hours the bar breathes amber until you press Done: clean, check, grease.",
+                       "author":  "Sam",
+                       "kind":  "maintenance",
+                       "preview":  "F59E0BF59E0BF59E0BF59E0BF59E0BF59E0BF59E0BF59E0BF59E0BF59E0BF59E0BF59E0BF59E0BF59E0BF59E0BF59E0BF59E0BF59E0BF59E0BF59E0BF59E0BF59E0BF59E0BF59E0BF59E0B"
+                   },
+                   {
                        "file":  "countdown.json",
                        "name":  "Countdown",
                        "description":  "Counts down to a date and time you choose: the bar starts full and empties as it gets closer, then celebrates for 12 hours when it arrives.",
@@ -61,6 +109,15 @@
                        "author":  "Sam",
                        "kind":  "live meter",
                        "preview":  "94A3B894A3B894A3B894A3B894A3B894A3B894A3B894A3B894A3B8111418111418111418111418111418111418111418111418111418111418111418111418111418111418111418111418",
+                       "needs":  "place"
+                   },
+                   {
+                       "file":  "storm-risk.json",
+                       "name":  "Storm risk",
+                       "description":  "How likely thunderstorms are near you now, before leaving a print running overnight. By Open-Meteo.",
+                       "author":  "Sam",
+                       "kind":  "live meter",
+                       "preview":  "FACC15FACC15FACC15FACC15FACC15FACC15111418111418111418111418111418111418111418111418111418111418111418111418111418111418111418111418111418111418111418",
                        "needs":  "place"
                    },
                    {

@@ -34,9 +34,12 @@ README's API section).
 | `source` | A live meter from a web address: `{"url", "path", "min", "max", "colour", "every"}`. With `"base"`, a second path, the meter shows the percentage change from `base` to `path` (base needs firmware 0.7.7 or later) |
 | `countdown` | A meter that empties from `from` to `to`, then shows its `done` effect for `doneHours`: `{"from": "YYYY-MM-DDTHH:MM", "to": "...", "colour": "#RRGGBB", "done": "rainbow", "doneHours": 0-168}`. Times are local, in the bar's own time zone. Needs firmware 0.7.7 or later |
 | `filament` | The colour of the filament the printer is using: `{"effect": "solid", "speed": 1-100}`. Between prints, the last one used, breathing slowly. Needs firmware 0.7.3 or later and a Bambu printer |
+| `printer` | Something the printer reports, as a meter: `{"show": "remain", "colour": "#RRGGBB", "min": 0, "max": 100}`. `show` is `remain` (left on the loaded spool, in its own colour unless `colour` is given), `humidity` (how damp the AMS is: green, amber or red unless `colour` is given; `min`/`max` are the humidity percentages it spans, 10 and 50 by default), `timeleft` (drains as the print's time estimate counts down), `heating` (fills as the nozzle and bed reach temperature) or `chamber` (fills from `min` to `max` °C, 20 and 45 by default). `timeleft`, `heating` and `chamber` show during prints whatever "Show it" is set to. Needs firmware 0.7.16 or later and the bar's own printer link; `remain`, `humidity` and `chamber` are Bambu only |
+| `maintenance` | A reminder after so many hours of printing: `{"hours": 1-10000, "task": "…", "colour": "#RRGGBB"}`. Once due, the bar breathes in the colour until **Done** is pressed on the page. Needs firmware 0.7.16 or later |
 
 Effects: solid, breathe, fill, flash, chase, rainbow, gradient, waves, scroll,
-theatre, scanner, meteor, fire, twinkle, sparkle, rain, aurora.
+theatre, scanner, meteor, fire, twinkle, sparkle, rain, aurora, and from
+firmware 0.7.15 heartbeat, strobe, candle, ripple and stack.
 
 ### Live meters (`source`)
 
@@ -73,7 +76,8 @@ Two more `needs` work the same way:
 
 1. Add your `.json` file to this folder.
 2. Add an entry for it to `index.json`: `file`, `name`, `description`,
-   `author`, `kind` (`look`, `animation`, `live meter` or `countdown`),
+   `author`, `kind` (`look`, `animation`, `live meter`, `countdown`,
+   `printer` or `maintenance`),
    `preview` (25 colours as 150 hex digits for the little strip on the store
    card) and, for an add-on that asks for something, its `needs`.
 3. Open a pull request.

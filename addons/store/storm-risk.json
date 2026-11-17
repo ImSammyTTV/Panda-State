@@ -1,0 +1,14 @@
+{
+    "id": "storm",
+    "name": "Storm risk in {place}",
+    "description": "How much energy the air holds for thunderstorms now (CAPE, 0 to 2,500 J/kg): past half way, storms are likely nearby. Worth a glance before leaving a long print running overnight. Weather data by Open-Meteo.com (CC BY 4.0).",
+    "author": "Sam",
+    "source": {
+        "url": "https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=cape",
+        "path": "current.cape",
+        "min": 0,
+        "max": 2500,
+        "colour": "#FACC15",
+        "every": 900
+    }
+}
