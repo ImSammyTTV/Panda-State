@@ -268,6 +268,11 @@ way: the copy can be put back any time.
   starts `PandaP2-Setup` (`PandaState-Setup` on the other boards), password `panda` + the last six hex digits of its MAC
   (the page shows it). Join it and open `http://192.168.4.1/`. It cannot be
   switched off for good.
+- **Errors that do not go on for ever.** In the Printer section, *Show a
+  printer error for* sets how many minutes an error is shown before the bar
+  goes back to its idle look (0.7.14 and later; 0, the default, shows it until
+  the printer clears it). A failed print stays "failed" on the printer until
+  the next one starts.
 - **A report for bug reports.** *Save a report* in the Firmware section
   downloads what the bar is doing, its settings and a log of recent events
   (0.7.14 and later). The log survives a restart or a crash, not a power cut.

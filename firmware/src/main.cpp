@@ -262,6 +262,8 @@ static char order[4] = "GRB";
 static bool reversed = false;
 /* The cool-down the bar works out for itself when paired: "ready" only once this many minutes have passed AND the bed is at or below the target. A controller that pushes states makes its own decision and ignores these. */
 static uint8_t coolMinutes = 10;
+/* How long an error is shown before the bar goes back to its idle look; 0 shows it until it clears. A failed print stays "failed" on the printer until the next one starts, which kept the error flashing for hours. */
+static uint16_t errorMinutes = 0;
 static uint8_t coolTarget = 35;
 /* The two modes the stock firmware had: follow the printer, or dance to the room. */
 enum Mode : uint8_t { MODE_STATUS, MODE_MUSIC, MODE_COUNT };
@@ -372,6 +374,7 @@ static void configToJson(JsonDocument &doc) {
   doc["split"] = rgbSplit;
 #endif
   doc["cool"]["minutes"] = coolMinutes;
+  doc["error"]["minutes"] = errorMinutes;
   doc["cool"]["target"] = coolTarget;
   doc["mode"] = MODE_NAMES[mode];
   doc["music"]["sensitivity"] = SENS_NAMES[sensitivity];
@@ -416,6 +419,11 @@ static const char *applyConfig(JsonVariantConst doc) {
     int value;
     if (!intIn(doc["cool"]["minutes"], 0, 120, value)) return "Cool-down is 0-120 minutes";
     coolMinutes = value;
+  }
+  if (!doc["error"]["minutes"].isNull()) {
+    int value;
+    if (!intIn(doc["error"]["minutes"], 0, 1440, value)) return "An error is shown for 0-1440 minutes (0: until it clears)";
+    errorMinutes = value;
   }
   if (!doc["cool"]["target"].isNull()) {
     int value;
@@ -1370,7 +1378,7 @@ enum Source : uint8_t { SRC_NONE, SRC_PREVIEW, SRC_CONTROLLER, SRC_PRINTER };
 static const char *SRC_NAMES[] = {"none", "preview", "controller", "printer"};
 
 /* What to show, how full "fill" is, and who decided. A controller that is speaking wins over the bar's own printer link: it is assumed to know more. */
-static State shown(float &fill, Source &source) {
+static State shownAsTold(float &fill, Source &source) {
   if (previewUntil && millis() < previewUntil) { fill = previewProgress; source = SRC_PREVIEW; return previewState; }
   previewUntil = 0;
   if (everPushed && millis() - lastPushAt <= LINK_TIMEOUT_MS) { fill = progress; source = SRC_CONTROLLER; return current; }
@@ -1378,6 +1386,28 @@ static State shown(float &fill, Source &source) {
   fill = 0;
   source = SRC_NONE;
   return ST_OFFLINE;
+}
+
+/* When the error now showing began, 0 when none is. Kept by the loop task alone (trackError); shown() is also asked from Home Assistant's task and only reads it. */
+static volatile uint32_t errorSince = 0;
+
+static void trackError() {
+  float fill;
+  Source source;
+  const State state = shownAsTold(fill, source);
+  if (source == SRC_PREVIEW) return;   // a look being tried says nothing about the printer
+  if (state != ST_ERROR) { errorSince = 0; return; }
+  if (!errorSince) errorSince = millis() | 1;
+}
+
+/* The same, except that an error shown for longer than the owner wants gives way to the idle look (and an add-on, if one shows then) until it clears. A look being tried is always shown as it is. */
+static State shown(float &fill, Source &source) {
+  const State state = shownAsTold(fill, source);
+  if (state == ST_ERROR && source != SRC_PREVIEW && errorMinutes) {
+    const uint32_t since = errorSince;
+    if (since && millis() - since > errorMinutes * 60000UL) { fill = 0; return ST_IDLE; }
+  }
+  return state;
 }
 
 static void hsv(float h, uint8_t &r, uint8_t &g, uint8_t &b) {
@@ -2326,7 +2356,7 @@ static const char API_DOC[] PROGMEM = R"JSON({"about":"Panda State, open firmwar
 {"call":"GET /api/status","does":"Everything: what is showing and why, printer link, microphone, clock, add-ons, settings, the 25 LEDs as hex"},
 {"call":"POST /api/state","body":{"state":"idle|printing|paused|finished|cooling|ready|error|off","progress":"0-100"},"does":"A controller saying what the printer is doing. Repeat at least every 45 s; when it stops, the bar's own printer link takes over"},
 {"call":"POST /api/addon","body":{"id":"a-z0-9-_ up to 15","name":"shown on the page","ttl":"seconds this post stays valid, default 120","look":{"colour":"#RRGGBB","colour2":"#RRGGBB","effect":"any effect listed under /api/config","speed":"1-100","progress":"0-100"},"meters":[{"value":"0-100","colour":"#RRGGBB"}],"frame":"25 colours as a list of #RRGGBB or 150 hex digits"},"does":"An add-on saying what it wants shown: send ONE of look, meters (1-4) or frame, and keep posting. Shown only if picked under Add-ons. {id, remove:true} withdraws it"},
-{"call":"POST /api/config","body":{"brightness":"0-100","mode":"status|music","music":{"sensitivity":"low|medium|high|auto"},"states":{"<state>":{"colour":"#RRGGBB","colour2":"#RRGGBB or auto","effect":"solid|breathe|fill|flash|chase|rainbow|gradient|waves|scroll|theatre|scanner|meteor|fire|twinkle|sparkle|rain|aurora","speed":"1-100"}},"cool":{"minutes":"0-120","target":"20-60"},"schedule":{"enabled":true,"from":"HH:MM","to":"HH:MM","level":"0-100"},"time":{"tz":"POSIX rule","zone":"label"},"addon":{"show":"<id> or empty","when":"idle|always"},"order":"GRB|RGB|...","reversed":false},"does":"Change any subset of the settings; saved"},
+{"call":"POST /api/config","body":{"brightness":"0-100","mode":"status|music","music":{"sensitivity":"low|medium|high|auto"},"states":{"<state>":{"colour":"#RRGGBB","colour2":"#RRGGBB or auto","effect":"solid|breathe|fill|flash|chase|rainbow|gradient|waves|scroll|theatre|scanner|meteor|fire|twinkle|sparkle|rain|aurora","speed":"1-100"}},"error":{"minutes":"0-1440: how long an error is shown before the idle look returns; 0 until it clears"},"cool":{"minutes":"0-120","target":"20-60"},"schedule":{"enabled":true,"from":"HH:MM","to":"HH:MM","level":"0-100"},"time":{"tz":"POSIX rule","zone":"label"},"addon":{"show":"<id> or empty","when":"idle|always"},"order":"GRB|RGB|...","reversed":false},"does":"Change any subset of the settings; saved"},
 {"call":"POST /api/preview","body":{"state":"<state>","progress":"0-100","seconds":"1-120"},"does":"Show a state briefly without it counting as the printer's"},
 {"call":"POST /api/printer","body":{"ip":"...","serial":"...","code":"..."},"does":"Pair with a Bambu printer; {forget:true} unpairs"},
 {"call":"POST /api/printer","body":{"type":"klipper","host":"IP or name.local","port":"7125","key":"Moonraker API key, optional"},"does":"Follow a Klipper printer through Moonraker instead (polled every 2 s)"},
@@ -3907,6 +3937,9 @@ static void handleHostName() {
 
 /* Changes in what the other tasks report, written to the log once a second from here, so that only this task writes it. The same fields the page shows; a line only when one changes. */
 static void logWatch() {
+  static bool errorTimedOut = false;
+  const bool timedOut = errorMinutes && errorSince && millis() - errorSince > errorMinutes * 60000UL;
+  if (timedOut != errorTimedOut) { if (timedOut) logLine("Error shown for %u min: back to the idle look until it clears", (unsigned)errorMinutes); errorTimedOut = timedOut; }
   static int wifiWas = -1;
   const int wifi = WiFi.status() == WL_CONNECTED;
   if (wifi != wifiWas) {
@@ -3996,6 +4029,7 @@ void loop() {
   static uint32_t lastWatchAt = 0;
   if (millis() - lastWatchAt >= 1000) {
     lastWatchAt = millis();
+    trackError();
     logWatch();
     watchTrial();
     keepOtherNames();
