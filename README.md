@@ -20,14 +20,6 @@ API.
 
 <p align="center"><sub>Free and open. If it makes your printer nicer to live with, a drink on <a href="https://ko-fi.com/imsammyttv">Ko-fi</a> helps fund the next feature.</sub></p>
 
-> [!WARNING]
-> **Unofficial**, and not made or supported by BIQU, BigTreeTech or Bambu Lab.
-> Made and tested on the **Panda Status P2**. The builds for the original Panda
-> Status, the Panda Lux RGB and the Panda RGB Controller use pins read out of
-> BIQU's own firmware for those boards, but **have not been run on that
-> hardware yet** (see [Which boards](#which-boards)). **Use at your own risk**
-> (see the [disclaimer](#disclaimer)).
-
 <p align="center"><img src="docs/live-leds.png" alt="The bar's own web page, its live picture of the 25 LEDs running the rainbow effect" width="640"></p>
 
 ## Highlights
@@ -401,6 +393,12 @@ sit side by side. The image must stay under 1.94 MB.
 ---
 
 ## Disclaimer
+
+**Unofficial**, and not made or supported by BIQU, BigTreeTech or Bambu Lab.
+Made and tested on the **Panda Status P2**. The builds for the original Panda
+Status, the Panda Lux RGB and the Panda RGB Controller use pins read out of
+BIQU's own firmware for those boards, but **have not been run on that hardware
+yet** (see [Which boards](#which-boards)).
 
 Provided **as is**, without warranty of any kind. Installing third-party
 firmware may void your warranty and can leave a device unusable. **The authors
