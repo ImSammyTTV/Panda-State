@@ -331,14 +331,14 @@ function renderAddons(s){
   if(f.from||f.loading||f.error){
     const posted=s.addons.find(a=>a.id===f.id);
     tiles.push({id:f.id,name:f.name||(f.loading?'Loading…':'Add-on file'),desc:f.error||f.description,tag:'',
-      sub:[f.kind!=='none'?f.kind:'',f.value!==undefined?'reads '+(+f.value).toPrecision(4):'',f.author?'by '+f.author:''].filter(Boolean).join(' · '),live:posted&&posted.fresh,bad:!!f.error,file:true});
+      sub:[f.kind!=='none'?f.kind:'',f.kind==='maintenance'&&f.value!==undefined?(+f.value).toFixed(1)+' of '+f.every+' print hours'+(f.due?' · due now':''):f.value!==undefined?'reads '+Math.round(+f.value*10)/10+(f.unit?' '+f.unit:''):'',f.author?'by '+f.author:''].filter(Boolean).join(' · '),live:posted&&posted.fresh,bad:!!f.error,file:true,maint:f.kind==='maintenance'});
   }
   for(const a of s.addons){if(f.from&&a.id===f.id)continue;tiles.push({id:a.id,name:a.name,tag:'program',sub:a.kind+' · '+(a.fresh?'posted '+a.age+' s ago':'stopped posting'),live:a.fresh});}
   /* Picked but nothing is running it: replaced by another add-on file, or a program that stopped. Said plainly, with a way out. */
   if(want&&!tiles.some(t=>t.id===want))tiles.push({id:want,name:want,desc:'Picked, but nothing is running it now: it was replaced, or the program that posted it has stopped. Use it again from the store, or clear it.',tag:'not running',bad:true,missing:true});
   const html=tiles.length?tiles.map(t=>'<div class="tile'+(tiles.length===1?' wide':'')+'"'+(t.id&&t.id===want?' data-on':'')+'><div class="body"><div class="t"><i class="dot"'+(t.live?' data-live':'')+(t.bad?' data-bad':'')+'></i><span>'+esc(t.name)+'</span>'+(t.tag?'<em class="tag">'+t.tag+'</em>':'')+'</div>'
     +(t.desc?'<div class="d">'+esc(t.desc)+'</div>':'')+'<div class="sub">'+esc(t.sub||'')+(s.addonShowing&&s.addonShowing===t.id?' · on the bar now':'')+'</div></div>'
-    +'<div class="acts">'+(t.missing?'<button data-pick="">Clear</button>':t.id?(t.id===want?'<button class="go" disabled>Picked</button>':'<button data-pick="'+esc(t.id)+'">Show this</button>'):'')+(t.file?'<button data-remove="1">Remove</button>':'')+'</div></div>').join('')
+    +'<div class="acts">'+(t.missing?'<button data-pick="">Clear</button>':t.id?(t.id===want?'<button class="go" disabled>Picked</button>':'<button data-pick="'+esc(t.id)+'">Show this</button>'):'')+(t.maint?'<button data-maint="1" title="Start counting the print hours again">Done</button>':'')+(t.file?'<button data-remove="1">Remove</button>':'')+'</div></div>').join('')
     :'<div class="empty">Nothing yet. Pick one from the store below, or upload a file of your own.</div>';
   if(html!==window.adHtml){window.adHtml=html;$('adtiles').innerHTML=html;}
   $('adnone').hidden=!want;
@@ -347,6 +347,7 @@ function renderAddons(s){
   $('adsum').textContent=on?on.name+(s.addonShowing===on.id?' · on the bar now':''):'None picked';
 }
 $('adtiles').onclick=async(e)=>{const b=e.target.closest('button');if(!b)return;if(b.dataset.pick!==undefined)pick(b.dataset.pick);
+  if(b.dataset.maint){const r=await post('/api/addonfile',{maintenanceDone:true});$('admsg').textContent=r.message||(r.ok?'Done':'Not saved');return;}
   if(b.dataset.remove){const card=b.closest('.tile'),name=card?card.querySelector('.t span').textContent:'this add-on';
     ask({title:'Remove '+name+'?',sub:'It comes off the bar. You can add it again from the store any time.',ok:'Remove',
       act:async()=>{const r=await post('/api/addonfile',{remove:true});if(!r.ok)throw new Error(r.message||'The bar did not remove it');$('admsg').textContent='';}});}};

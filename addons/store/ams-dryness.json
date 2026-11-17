@@ -1,0 +1,11 @@
+{
+    "id": "ams-dry",
+    "name": "AMS dryness",
+    "description": "How damp the AMS feeding your filament is: green and short is dry, amber is getting damp, red and full means it is time to change the desiccant. Uses the AMS's humidity percentage where it sends one. Bambu printers with an AMS.",
+    "author": "Sam",
+    "printer": {
+        "show": "humidity",
+        "min": 10,
+        "max": 50
+    }
+}

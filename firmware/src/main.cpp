@@ -616,8 +616,8 @@ static void prSetError(const char *text) { strlcpy(prError, text, sizeof prError
  */
 static struct {
   bool inString, escaped, tooLong, hadString, awaiting, capturing, valueIsString;
-  char text[20]; uint8_t length;           // the string just read; a key if a colon follows
-  char key[20];                            // the key whose value comes next
+  char text[24]; uint8_t length;           // the string just read; a key if a colon follows (room for "nozzle_target_temper", 20)
+  char key[24];                            // the key whose value comes next
   char value[16]; uint8_t valueLength;
   char path[8][14]; uint8_t depth;         // the key of each open container, "" for an array element
   uint16_t overflow;                       // containers open below the eighth level: counted only, so their closes do not unwind the levels above
@@ -628,10 +628,14 @@ static struct {
   int slotId; uint32_t slotColour; bool slotHasColour; char slotType[10];
   int unitId; uint8_t unitCount; int unitSlot[4]; uint32_t unitColour[4]; bool unitHas[4]; char unitType[4][10];
   int extId, extSnow;
+  /* 0.7.16: how much is left on each spool, the AMS's dryness, the time left and the temperatures. -2: not in this message. */
+  int slotRemain; int unitRemain[4]; int unitHumid, unitHumidRaw;
+  int timeLeft; float nozzle, nozzleTarget, bedTarget, chamber;
+  bool gotTimeLeft, gotNozzle, gotNozzleTarget, gotBedTarget, gotChamber;
 } scan;
 
 /* What the printer has said about its filament, kept between messages: printers send only what changed. */
-struct FilamentTray { int16_t tray; uint32_t colour; char type[10]; };
+struct FilamentTray { int16_t tray; uint32_t colour; char type[10]; int8_t remain; };   // remain: percent left, -1 not known
 static FilamentTray filTrays[26];   // 16 AMS trays, 8 in AMS HT units, 2 external spools
 static uint8_t filTrayCount = 0;
 static volatile int prTrayNow = -1;          // -1 never heard
@@ -639,18 +643,38 @@ static volatile int prActiveExt = 0;
 static int prSnow[2] = {-1, -1};             // -1 never heard; 0xFFFF empty
 static bool prSnowSeen = false;
 
-static void filRemember(int tray, uint32_t colour, bool has, const char *type) {
+static void filRemember(int tray, uint32_t colour, bool has, const char *type, int remain = -2) {
   for (int i = 0; i < filTrayCount; i++)
     if (filTrays[i].tray == tray) {
       if (!has) { filTrays[i] = filTrays[--filTrayCount]; return; }   // an emptied tray is forgotten
       filTrays[i].colour = colour; strlcpy(filTrays[i].type, type, sizeof filTrays[i].type);
+      if (remain != -2) filTrays[i].remain = constrain(remain, -1, 100);
       return;
     }
   if (!has || filTrayCount >= sizeof filTrays / sizeof filTrays[0]) return;
   filTrays[filTrayCount].tray = tray; filTrays[filTrayCount].colour = colour;
   strlcpy(filTrays[filTrayCount].type, type, sizeof filTrays[filTrayCount].type);
+  filTrays[filTrayCount].remain = remain == -2 ? -1 : constrain(remain, -1, 100);
   filTrayCount++;
 }
+
+/* Each AMS unit's dryness, kept between messages like the trays. level: the printer's 1 (wet) to 5 (dry); raw: relative humidity in percent, from units that send it. -1: not known. */
+struct AmsUnit { int16_t id; int8_t level; int8_t raw; };
+static AmsUnit amsUnits[12];
+static uint8_t amsCount = 0;
+static void amsRemember(int id, int level, int raw) {
+  if (id < 0 || (level < 0 && raw < 0)) return;
+  int i = 0;
+  while (i < amsCount && amsUnits[i].id != id) i++;
+  if (i == amsCount) {
+    if (amsCount >= sizeof amsUnits / sizeof amsUnits[0]) return;
+    amsUnits[amsCount++] = {(int16_t)id, -1, -1};
+  }
+  if (level >= 0) amsUnits[i].level = constrain(level, 0, 5);
+  if (raw >= 0) amsUnits[i].raw = constrain(raw, 0, 100);
+}
+static volatile int prTimeLeft = -1;                  // minutes left on the print, -1 not known
+static volatile float prNozzle = NAN, prNozzleTarget = NAN, prBedTarget = NAN, prChamber = NAN;
 
 /* "F72323FF" is colour then alpha; an alpha of 00 (or no colour) is an empty tray. */
 static bool trayColour(const char *text, uint32_t &out) {
@@ -664,7 +688,7 @@ static bool trayColour(const char *text, uint32_t &out) {
 
 static const char *scanUp(int n) { return scan.depth >= n ? scan.path[scan.depth - n] : "\x01"; }
 
-static void scanReset() { memset(&scan, 0, sizeof scan); scan.slotId = scan.unitId = scan.extId = scan.extSnow = -1; }
+static void scanReset() { memset(&scan, 0, sizeof scan); scan.slotId = scan.unitId = scan.extId = scan.extSnow = -1; scan.slotRemain = -2; scan.unitHumid = scan.unitHumidRaw = -1; }
 
 static void scanFinish() {
   scan.value[scan.valueLength] = 0;
@@ -675,6 +699,11 @@ static void scanFinish() {
   if (!strcmp(k, "gcode_state")) { strlcpy(scan.gcode, v, sizeof scan.gcode); scan.gotGcode = true; }
   else if (!strcmp(k, "mc_percent")) { scan.percent = atoi(v); scan.gotPercent = true; }
   else if (!strcmp(k, "bed_temper")) { scan.bed = atof(v); scan.gotBed = true; }
+  else if (!strcmp(p1, "print") && !strcmp(k, "mc_remaining_time")) { scan.timeLeft = atoi(v); scan.gotTimeLeft = true; }
+  else if (!strcmp(p1, "print") && !strcmp(k, "nozzle_temper")) { scan.nozzle = atof(v); scan.gotNozzle = true; }
+  else if (!strcmp(p1, "print") && !strcmp(k, "nozzle_target_temper")) { scan.nozzleTarget = atof(v); scan.gotNozzleTarget = true; }
+  else if (!strcmp(p1, "print") && !strcmp(k, "bed_target_temper")) { scan.bedTarget = atof(v); scan.gotBedTarget = true; }
+  else if (!strcmp(p1, "print") && !strcmp(k, "chamber_temper")) { scan.chamber = atof(v); scan.gotChamber = true; }
   else if (!strcmp(k, "tray_now") && !strcmp(p1, "ams")) { scan.trayNow = atoi(v); scan.gotTrayNow = true; }
   else if (!strcmp(k, "state") && !strcmp(p1, "extruder")) { scan.extState = atoi(v); scan.gotExtState = true; }
   /* A tray: inside ams.ams[].tray[], or an external spool (vt_tray, or vir_slot[] on dual-nozzle printers). */
@@ -682,9 +711,14 @@ static void scanFinish() {
     if (!strcmp(k, "id")) scan.slotId = atoi(v);
     else if (!strcmp(k, "tray_color")) scan.slotHasColour = trayColour(v, scan.slotColour);
     else if (!strcmp(k, "tray_type")) strlcpy(scan.slotType, v, sizeof scan.slotType);
+    else if (!strcmp(k, "remain")) scan.slotRemain = atoi(v);
   }
   /* An AMS unit: an element of ams.ams[]. */
-  else if (!p1[0] && !strcmp(p2, "ams") && !strcmp(k, "id")) scan.unitId = atoi(v);
+  else if (!p1[0] && !strcmp(p2, "ams")) {
+    if (!strcmp(k, "id")) scan.unitId = atoi(v);
+    else if (!strcmp(k, "humidity")) scan.unitHumid = atoi(v);
+    else if (!strcmp(k, "humidity_raw")) scan.unitHumidRaw = atoi(v);
+  }
   /* A nozzle: an element of device.extruder.info[]. */
   else if (!p1[0] && !strcmp(p2, "info") && !strcmp(p3, "extruder")) {
     if (!strcmp(k, "id")) scan.extId = atoi(v);
@@ -695,14 +729,14 @@ static void scanFinish() {
 
 static void scanTrayDone(bool external) {
   if (scan.slotId >= 0) {
-    if (external) filRemember(scan.slotId, scan.slotColour, scan.slotHasColour, scan.slotType);
+    if (external) filRemember(scan.slotId, scan.slotColour, scan.slotHasColour, scan.slotType, scan.slotRemain);
     else if (scan.unitCount < 4) {
       const int i = scan.unitCount++;
-      scan.unitSlot[i] = scan.slotId; scan.unitColour[i] = scan.slotColour; scan.unitHas[i] = scan.slotHasColour;
+      scan.unitSlot[i] = scan.slotId; scan.unitColour[i] = scan.slotColour; scan.unitHas[i] = scan.slotHasColour; scan.unitRemain[i] = scan.slotRemain;
       strlcpy(scan.unitType[i], scan.slotType, sizeof scan.unitType[i]);
     }
   }
-  scan.slotId = -1; scan.slotHasColour = false; scan.slotType[0] = 0;
+  scan.slotId = -1; scan.slotHasColour = false; scan.slotType[0] = 0; scan.slotRemain = -2;
 }
 
 /* A container closes: whatever it held is complete. */
@@ -719,8 +753,9 @@ static void scanClose() {
     /* The unit's id may come before or after its trays, so they are placed only once the unit is complete. */
     if (scan.unitId >= 0)
       for (int i = 0; i < scan.unitCount; i++)
-        filRemember(scan.unitId >= 128 ? scan.unitId : scan.unitId * 4 + scan.unitSlot[i], scan.unitColour[i], scan.unitHas[i], scan.unitType[i]);
-    scan.unitId = -1; scan.unitCount = 0;
+        filRemember(scan.unitId >= 128 ? scan.unitId : scan.unitId * 4 + scan.unitSlot[i], scan.unitColour[i], scan.unitHas[i], scan.unitType[i], scan.unitRemain[i]);
+    amsRemember(scan.unitId, scan.unitHumid, scan.unitHumidRaw);
+    scan.unitId = -1; scan.unitCount = 0; scan.unitHumid = scan.unitHumidRaw = -1;
   } else if (element && !strcmp(p1, "info") && !strcmp(p2, "extruder")) {
     if (scan.extId == 0 || scan.extId == 1) { prSnow[scan.extId] = scan.extSnow; prSnowSeen = true; }
     scan.extId = scan.extSnow = -1;
@@ -788,6 +823,11 @@ static void scanCommit() {
   if (scan.gotBed) prBed = scan.bed;
   if (scan.gotTrayNow) prTrayNow = scan.trayNow;
   if (scan.gotExtState) prActiveExt = (scan.extState >> 8) & 1;
+  if (scan.gotTimeLeft) prTimeLeft = scan.timeLeft;
+  if (scan.gotNozzle) prNozzle = scan.nozzle;
+  if (scan.gotNozzleTarget) prNozzleTarget = scan.nozzleTarget;
+  if (scan.gotBedTarget) prBedTarget = scan.bedTarget;
+  if (scan.gotChamber) prChamber = scan.chamber;
   prLastMsgAt = millis();
 }
 
@@ -813,7 +853,7 @@ static const FilamentTray *filFind(int tray) {
 }
 
 /* The last filament seen loaded, kept so the bar can still say it between prints (a dual-nozzle printer unloads after each one). */
-static FilamentTray filLast = {-1, 0, ""};
+static FilamentTray filLast = {-1, 0, "", -1};
 
 static bool netRead(WiFiClientSecure &net, uint8_t *into, size_t count, uint32_t timeoutMs) {
   size_t got = 0;
@@ -874,7 +914,7 @@ static void klipperPoll(const String &host, uint16_t port, const String &key) {
   http.setConnectTimeout(4000);
   http.setTimeout(5000);
   const String url = "http://" + address + ":" + String(port) +
-    "/printer/objects/query?webhooks=state&print_stats=state&display_status=progress&virtual_sdcard=progress&heater_bed=temperature";
+    "/printer/objects/query?webhooks=state&print_stats=state,print_duration&display_status=progress&virtual_sdcard=progress&heater_bed=temperature,target&extruder=temperature,target";
   if (!http.begin(net, url)) { prConnected = false; prSetError("That address does not work"); prWait(15000); return; }
   if (key.length()) http.addHeader("X-Api-Key", key);
   http.useHTTP10(true);   // the answer is read straight off the connection below, which a chunked HTTP/1.1 reply would garble
@@ -908,6 +948,14 @@ static void klipperPoll(const String &host, uint16_t port, const String &key) {
   const float shown = max(st["display_status"]["progress"] | -1.0f, st["virtual_sdcard"]["progress"] | -1.0f);
   prPercent = shown < 0 ? -1 : (int)lroundf(shown * 100);
   prBed = st["heater_bed"]["temperature"].isNull() ? NAN : st["heater_bed"]["temperature"].as<float>();
+  prBedTarget = st["heater_bed"]["target"].isNull() ? NAN : st["heater_bed"]["target"].as<float>();
+  prNozzle = st["extruder"]["temperature"].isNull() ? NAN : st["extruder"]["temperature"].as<float>();
+  prNozzleTarget = st["extruder"]["target"].isNull() ? NAN : st["extruder"]["target"].as<float>();
+  /* Moonraker gives the time spent, not the time left: worked out from the progress once there is enough of it to go on. */
+  {
+    const float spent = st["print_stats"]["print_duration"] | -1.0f;
+    prTimeLeft = !strcmp(gcode, "RUNNING") && spent > 0 && shown > 0.02f ? (int)lroundf(spent * (1 - shown) / shown / 60) : -1;
+  }
   prLastMsgAt = millis();
   prConnected = true;
   prSetError("");
@@ -933,6 +981,7 @@ static void printerTask(void *) {
       prGcode[0] = 0; prPercent = -1; prBed = NAN; prLastMsgAt = 0;
       filTrayCount = 0; prTrayNow = -1; prActiveExt = 0;
       prSnow[0] = prSnow[1] = -1; prSnowSeen = false;
+      amsCount = 0; prTimeLeft = -1; prNozzle = prNozzleTarget = prBedTarget = prChamber = NAN;
     }
     /* Acknowledged here too: the link is already down, and a download that asks for it to be let go would otherwise wait out its whole patience. */
     if (prPaused) { prConnected = false; prHoldAck = true; prSetError("Paused while a firmware update downloads"); prWait(1000); continue; }
@@ -1317,6 +1366,7 @@ struct Addon {
   Look look; float fill;
   uint8_t meterCount; float meterValue[4]; uint32_t meterColour[4];
   uint8_t pixels[LED_COUNT][3];
+  bool duringPrint;   // shown over a print too, whatever "show it" says: it is about the print (time left, heating up)
 };
 static const int ADDON_SLOTS = 4;
 static Addon addons[ADDON_SLOTS];
@@ -1337,7 +1387,7 @@ static const Addon *addonNow(State state) {
   if (!addonShow[0]) return nullptr;
   const Addon *a = addonById(addonShow);
   if (!a || !addonFresh(*a)) return nullptr;
-  if (addonWhen == WHEN_ALWAYS) return a;
+  if (addonWhen == WHEN_ALWAYS || a->duringPrint) return a;
   return state == ST_IDLE || state == ST_READY || state == ST_FINISHED || state == ST_OFFLINE || state == ST_OFF ? a : nullptr;
 }
 
@@ -1406,11 +1456,20 @@ static State shownAsTold(float &fill, Source &source) {
 static volatile uint8_t stateNow = ST_COUNT;
 static volatile uint32_t stateSince = 0;
 
+/* Print time, counted whenever the bar is told a print is running, and kept across restarts (saved every 10 minutes of it). */
+static volatile uint32_t printSeconds = 0;
+static volatile uint32_t maintFrom = 0;          // printSeconds when maintenance was last marked done
+static uint32_t printSecondsSaved = 0;
+
 static void trackState() {
   float fill;
   Source source;
   const State state = shownAsTold(fill, source);
   if (source == SRC_PREVIEW) return;   // a look being tried says nothing about the printer
+  if (state == ST_PRINTING) {
+    printSeconds = printSeconds + 1;
+    if (printSeconds - printSecondsSaved >= 600) { prefs.putUInt("printsec", printSeconds); printSecondsSaved = printSeconds; }
+  }
   if (state != stateNow) { stateSince = 0; stateNow = state; }
   if (!stateSince) stateSince = millis() | 1;
 }
@@ -2982,8 +3041,17 @@ static bool updInstall() {
  *                 "colour": "#RRGGBB", "every": 30-86400 }   a live meter
  *   }
  */
-enum FileKind : uint8_t { FA_NONE, FA_STATIC, FA_FRAMES, FA_SOURCE, FA_FILAMENT, FA_COUNTDOWN };
-static const char *FA_NAMES[] = {"none", "static", "frames", "source", "filament", "countdown"};
+enum FileKind : uint8_t { FA_NONE, FA_STATIC, FA_FRAMES, FA_SOURCE, FA_FILAMENT, FA_COUNTDOWN, FA_PRINTER, FA_MAINT };
+static const char *FA_NAMES[] = {"none", "static", "frames", "source", "filament", "countdown", "printer", "maintenance"};
+/* What a "printer" add-on shows as its meter. */
+enum PrinterReading : uint8_t { PRD_REMAIN, PRD_HUMIDITY, PRD_TIMELEFT, PRD_HEATING, PRD_CHAMBER, PRD_COUNT };
+static const char *PRD_NAMES[PRD_COUNT] = {"remain", "humidity", "timeleft", "heating", "chamber"};
+static uint8_t faReading = PRD_REMAIN;
+static bool faColourSet = false;      // the file gave a colour; otherwise the reading picks one
+static float faTotal = 0;             // time left: the most seen in this print, which the meter drains from
+static const char *faUnit = "";
+static uint32_t faMaintHours = 200;
+static String faTask;
 /* A countdown: a meter that drains from "from" to "to" (local times, in the
    bar's own time zone), then the done look for doneHours, then nothing. */
 static time_t faCdFrom = 0, faCdTo = 0;
@@ -3090,6 +3158,33 @@ static const char *faLoad(const String &text) {
     if (!src["colour"].isNull() && !parseColour(src["colour"].as<const char *>(), faColour)) return "source.colour must be #RRGGBB";
     faEveryMs = (uint32_t)constrain(src["every"] | 300, 30, 86400) * 1000;
     faKind = FA_SOURCE;
+  } else if (!doc["printer"].isNull()) {
+    /* {"printer":{"show":"remain|humidity|timeleft|heating|chamber","colour":"#RRGGBB","min":..,"max":..}}: something the printer reports, as a meter. */
+    JsonVariantConst pr = doc["printer"];
+    const int r = findName(PRD_NAMES, PRD_COUNT, pr["show"] | "");
+    if (r < 0) return "printer.show is remain, humidity, timeleft, heating or chamber";
+    faReading = r;
+    faColourSet = !pr["colour"].isNull();
+    faColour = 0xFFFFFF;
+    if (faColourSet && !parseColour(pr["colour"].as<const char *>(), faColour)) return "printer.colour must be #RRGGBB";
+    faMin = pr["min"] | (r == PRD_HUMIDITY ? 10.0f : r == PRD_CHAMBER ? 20.0f : 0.0f);
+    faMax = pr["max"] | (r == PRD_HUMIDITY ? 50.0f : r == PRD_CHAMBER ? 45.0f : 100.0f);
+    if (faMax == faMin) return "printer.min and printer.max must differ";
+    faTotal = 0;
+    faUnit = r == PRD_REMAIN ? "% left" : r == PRD_HUMIDITY ? "" : r == PRD_TIMELEFT ? "min left" : r == PRD_HEATING ? "% heated" : "°C";
+    faKind = FA_PRINTER;
+  } else if (!doc["maintenance"].isNull()) {
+    /* {"maintenance":{"hours":200,"task":"Grease the rods","colour":"#F59E0B"}}: a reminder after so many hours of printing. */
+    JsonVariantConst m = doc["maintenance"];
+    int hours;
+    hours = 200;
+    if (!m["hours"].isNull() && !intIn(m["hours"], 1, 10000, hours)) return "maintenance.hours is 1-10000";
+    faMaintHours = hours;
+    faTask = m["task"] | "";
+    faColour = 0xF59E0B;
+    if (!m["colour"].isNull() && !parseColour(m["colour"].as<const char *>(), faColour)) return "maintenance.colour must be #RRGGBB";
+    faUnit = "print hours";
+    faKind = FA_MAINT;
   } else {
     /* Same shape as a post: check it the same way, through the same code. */
     JsonDocument show;
@@ -3136,13 +3231,25 @@ static const char *faCheck(const String &text) {
     if (base.length() && !path.length()) return "source.base needs a source.path to compare with it";
     if ((src["max"] | 100.0f) == (src["min"] | 0.0f)) return "source.min and source.max must differ";
     if (!src["colour"].isNull() && !parseColour(src["colour"].as<const char *>(), colour)) return "source.colour must be #RRGGBB";
+  } else if (!doc["printer"].isNull()) {
+    JsonVariantConst pr = doc["printer"];
+    const int r = findName(PRD_NAMES, PRD_COUNT, pr["show"] | "");
+    if (r < 0) return "printer.show is remain, humidity, timeleft, heating or chamber";
+    if (!pr["colour"].isNull() && !parseColour(pr["colour"].as<const char *>(), colour)) return "printer.colour must be #RRGGBB";
+    if ((pr["min"] | (r == PRD_HUMIDITY ? 10.0f : r == PRD_CHAMBER ? 20.0f : 0.0f)) == (pr["max"] | (r == PRD_HUMIDITY ? 50.0f : r == PRD_CHAMBER ? 45.0f : 100.0f))) return "printer.min and printer.max must differ";
+  } else if (!doc["maintenance"].isNull()) {
+    JsonVariantConst m = doc["maintenance"];
+    int hours;
+    hours = 200;
+    if (!m["hours"].isNull() && !intIn(m["hours"], 1, 10000, hours)) return "maintenance.hours is 1-10000";
+    if (!m["colour"].isNull() && !parseColour(m["colour"].as<const char *>(), colour)) return "maintenance.colour must be #RRGGBB";
   } else {
     JsonDocument show;
     show["id"] = doc["id"];
     show["name"] = doc["name"] | doc["id"].as<const char *>();
     show["ttl"] = 120;
     for (const char *key : {"look", "meters", "frame"}) if (!doc[key].isNull()) show[key] = doc[key];
-    if (show.size() <= 3) return "Give one of look, meters, frame, frames, source, filament or countdown";
+    if (show.size() <= 3) return "Give one of look, meters, frame, frames, source, filament, countdown, printer or maintenance";
     return addonApply(show.as<JsonVariantConst>(), nullptr, true);
   }
   return nullptr;
@@ -3337,6 +3444,99 @@ static void faTick() {
       *slot = next;
     }
     xSemaphoreGive(addonLock);
+  } else if (faKind == FA_PRINTER && now - faPushedAt >= 2000) {
+    faPushedAt = now;
+    const bool fresh = printerFresh();
+    const bool printing = fresh && (!strcmp(prGcode, "RUNNING") || !strcmp(prGcode, "PAUSE") || !strcmp(prGcode, "PREPARE"));
+    float fill = NAN;
+    uint32_t colour = faColour;
+    bool duringPrint = false;
+    const char *why = "";
+    if (!fresh) why = "Waiting for the bar's own link to the printer (Printer section)";
+    else if (faReading == PRD_REMAIN) {
+      const int tray = filLoadedTray();
+      const FilamentTray *t = tray >= 0 ? filFind(tray) : nullptr;
+      if (!t) why = "Waiting for the printer to say which spool is loaded";
+      else if (t->remain < 0) why = "The loaded spool does not say how much is left: only Bambu spools with their tag report it";
+      else {
+        fill = t->remain;
+        faValue = t->remain;
+        if (!faColourSet) { colour = t->colour; if (max(colour >> 16 & 255, max(colour >> 8 & 255, colour & 255)) < 40) colour = 0x303030; }
+      }
+    } else if (faReading == PRD_HUMIDITY) {
+      /* The AMS that feeds the loaded spool, or the first one heard. */
+      const int tray = filLoadedTray();
+      const int unit = tray < 0 || tray >= 254 ? -1 : tray >= 128 ? tray : tray / 4;
+      const AmsUnit *u = nullptr;
+      for (int i = 0; i < amsCount; i++) if (amsUnits[i].id == unit) u = &amsUnits[i];
+      if (!u && amsCount) u = &amsUnits[0];
+      if (!u || (u->raw < 0 && u->level < 1)) why = "Waiting for an AMS to report its humidity (Bambu printers with an AMS)";
+      else {
+        /* The meter is dampness: full is wet. The percentage where the AMS sends one, else its level (1 wet to 5 dry). */
+        if (u->raw >= 0) { fill = constrain((u->raw - faMin) / (faMax - faMin) * 100, 0.0f, 100.0f); faValue = u->raw; faUnit = "% humidity"; }
+        else { fill = (5 - u->level) * 25.0f; faValue = u->level; faUnit = "level (5 is driest)"; }
+        if (!faColourSet) colour = fill < 40 ? 0x22C55E : fill < 70 ? 0xF59E0B : 0xEF4444;
+      }
+    } else if (faReading == PRD_TIMELEFT) {
+      duringPrint = true;
+      const int left = prTimeLeft;
+      if (!printing || left < 0) { faTotal = 0; why = printing ? "Waiting for the printer's time estimate" : ""; }
+      else {
+        if (left > faTotal) faTotal = left;
+        fill = faTotal > 0 ? left / faTotal * 100 : 100;
+        faValue = left;
+      }
+    } else if (faReading == PRD_HEATING) {
+      duringPrint = true;
+      /* How far the nozzle and bed are from room temperature to their targets; the slower one decides. Shown only while something heats. */
+      float part = 2, n = prNozzle, nt = prNozzleTarget, b = prBed, bt = prBedTarget;
+      if (!isnan(n) && !isnan(nt) && nt > 40 && n < nt - 2) part = min(part, (n - 25) / (nt - 25));
+      if (!isnan(b) && !isnan(bt) && bt > 30 && b < bt - 2) part = min(part, (b - 25) / (bt - 25));
+      if (part < 2) { fill = constrain(part * 100, 0.0f, 100.0f); faValue = fill; }
+    } else {
+      duringPrint = true;
+      const float c = prChamber;
+      if (isnan(c) || c <= 0) why = "This printer does not report its chamber temperature";
+      else if (printing) { fill = constrain((c - faMin) / (faMax - faMin) * 100, 0.0f, 100.0f); faValue = c; }
+    }
+    faError = why;
+    if (isnan(fill)) return;
+    xSemaphoreTake(addonLock, portMAX_DELAY);
+    if (Addon *slot = addonSlotFor(faId)) {
+      Addon next = {};
+      next.used = true;
+      strlcpy(next.id, faId, sizeof next.id);
+      strlcpy(next.name, faName, sizeof next.name);
+      next.at = now;
+      next.ttlMs = 10000;   // goes as soon as the reading does: heating done, print over
+      next.kind = ADDON_METERS;
+      next.meterCount = 1;
+      next.meterValue[0] = fill;
+      next.meterColour[0] = colour;
+      next.duringPrint = duringPrint;
+      *slot = next;
+    }
+    xSemaphoreGive(addonLock);
+  } else if (faKind == FA_MAINT && now - faPushedAt >= 2000) {
+    faPushedAt = now;
+    const float done = (printSeconds - maintFrom) / 3600.0f;
+    faValue = done;
+    faError = "";
+    if (done < faMaintHours) return;   // nothing to say until it is due
+    xSemaphoreTake(addonLock, portMAX_DELAY);
+    if (Addon *slot = addonSlotFor(faId)) {
+      Addon next = {};
+      next.used = true;
+      strlcpy(next.id, faId, sizeof next.id);
+      strlcpy(next.name, faName, sizeof next.name);
+      next.at = now;
+      next.ttlMs = 10000;
+      next.kind = ADDON_LOOK;
+      next.look = Look(faColour, FX_BREATHE, 20);
+      next.fill = 100;
+      *slot = next;
+    }
+    xSemaphoreGive(addonLock);
   } else if (faKind == FA_COUNTDOWN && now - faPushedAt >= 1000) {
     faPushedAt = now;
     /* Its dates are local times, so nothing is shown until the clock and zone are known: a guess would be off by hours. */
@@ -3437,7 +3637,9 @@ static void onlineToJson(JsonDocument &doc) {
   file["kind"] = FA_NAMES[faKind];
   file["loading"] = (bool)faReload;
   file["error"] = faError;
-  if (faKind == FA_SOURCE && !isnan(faValue)) file["value"] = faValue;
+  if ((faKind == FA_SOURCE || faKind == FA_PRINTER || faKind == FA_MAINT) && !isnan(faValue)) file["value"] = faValue;
+  if (faKind == FA_PRINTER || faKind == FA_MAINT) file["unit"] = faUnit;
+  if (faKind == FA_MAINT) { file["every"] = faMaintHours; file["task"] = faTask; file["due"] = !isnan(faValue) && faValue >= faMaintHours; }
   if (faKind == FA_COUNTDOWN && timeKnown()) file["endsIn"] = (long)(faCdTo - time(nullptr));
 
   /* Updates from GitHub. */
@@ -3475,6 +3677,14 @@ static void handleAddonFile() {
     const int hostAt = where.indexOf("://");
     if (hostAt >= 0) { where = where.substring(hostAt + 3); const int end = where.indexOf('/'); if (end >= 0) where = where.substring(0, end); }
     logLine("Add-on file: %s%s", doc["remove"].as<bool>() ? "removed" : !doc["url"].isNull() ? "from " : "uploaded", doc["remove"].as<bool>() || doc["url"].isNull() ? "" : where.c_str());
+  }
+  if (doc["maintenanceDone"].as<bool>()) {
+    maintFrom = printSeconds;
+    prefs.putUInt("printsec", printSeconds);
+    printSecondsSaved = printSeconds;
+    if (prefs.putUInt("maintfrom", maintFrom) != sizeof(uint32_t)) return sendResult(false, "Marked done, but the bar could not save it: it will be lost on a restart");
+    logLine("Maintenance marked done");
+    return sendResult(true, "Done: the count starts again");
   }
   if (doc["remove"].as<bool>()) {
     prefs.remove("faurl");
@@ -3864,6 +4074,8 @@ void setup() {
   loadConfig();
   outBegin();
 
+  printSeconds = printSecondsSaved = prefs.getUInt("printsec", 0);
+  maintFrom = prefs.getUInt("maintfrom", 0);
   const bool markedGood = imageMarkedGood();
   onTrial = !markedGood && prefs.getString("okbuild", "") != BUILD_ID;
   /* A build that proved itself before but is not down as good in the boot record (it was switched back to) is put down again: a bootloader that rolls back would otherwise drop it at its next start. */

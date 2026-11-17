@@ -1,0 +1,10 @@
+{
+    "id": "time-left",
+    "name": "Time left",
+    "description": "While a print runs, the bar drains as the printer's time estimate counts down, so half the bar is half the time left rather than half the layers. Shows during prints even if add-ons are set to wait for the printer to be idle.",
+    "author": "Sam",
+    "printer": {
+        "show": "timeleft",
+        "colour": "#3B82F6"
+    }
+}

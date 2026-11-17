@@ -1,0 +1,9 @@
+{
+    "id": "spool-left",
+    "name": "Filament left",
+    "description": "How much is left on the spool the printer is using, as a meter in the filament's own colour. Before a long print, a glance says whether it will last. Only Bambu spools with their tag report it; Bambu printers only.",
+    "author": "Sam",
+    "printer": {
+        "show": "remain"
+    }
+}

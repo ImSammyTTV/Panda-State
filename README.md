@@ -29,7 +29,7 @@ API.
 - 🏠 **Home Assistant** over MQTT: the bar appears by itself as a light with sensors, ready for automations.
 - 🌡️ **A real cool-down** after a print: the bar drains as the bed cools, then says *Ready*.
 - 🎨 **Every state restyled**: eight states, each with two colours, one of 22 effects, a speed, its own brightness and a time limit.
-- 🧩 **Add-ons and a store**: the loaded filament's colour, weather, rain, UV and air quality for your town, prices, looks, animations.
+- 🧩 **Add-ons and a store**: the loaded filament's colour and how much is left on the spool, AMS dryness, time left, heating up, a maintenance reminder, weather for your town, prices, looks and animations.
 - ⬆️ **Updates from GitHub**, checked against the release's checksums, installed with one click.
 - 📶 **Its own hotspot** when Wi-Fi fails, so you can always reach it.
 - 🎵 **Music mode**, a **schedule**, and an **open HTTP API** for your own apps.
@@ -99,11 +99,15 @@ safely move it.
 <summary><b>📸 A tour of the bar's page</b></summary>
 <br>
 
-<p align="center"><img src="docs/page-tour.gif" alt="A tour of the page: every section folded, then the add-ons and store, then Wi-Fi and firmware" width="560"></p>
+<p align="center"><img src="docs/page-tour.gif" alt="A tour of the page: the live bar and the four tiles, the state cards, the add-ons and store, then Wi-Fi and firmware" width="560"></p>
 
-Every section folds away, and a closed one still says how things are:
+The live bar comes first, then four tiles for the printer, Wi-Fi, firmware and Home Assistant (each opens its section). Every section folds away, and a closed one still says how things are:
 
-<p align="center"><img src="docs/web-page-overview.png" alt="Every section folded, each with a one-line summary" width="560"></p>
+<p align="center"><img src="docs/web-page-overview.png" alt="The live bar, the four tiles, and every section folded with a one-line summary" width="560"></p>
+
+Each state is a card with a picture of its effect in its own colours; **More** gives it its own brightness and a time limit:
+
+<p align="center"><img src="docs/web-page-states.png" alt="The state cards, each with a strip of its effect, its colours, effect, speed and badges" width="560"></p>
 
 The add-ons, with the store read from this repository:
 
@@ -112,6 +116,10 @@ The add-ons, with the store read from this repository:
 Wi-Fi with its hotspot fallback, and updates straight from GitHub:
 
 <p align="center"><img src="docs/web-page-wifi-firmware.png" alt="The Wi-Fi section with the hotspot settings, and the Firmware section showing it is up to date" width="560"></p>
+
+On a phone the page is one column, with a tab bar along the bottom:
+
+<p align="center"><img src="docs/web-page-phone.png" alt="The page on a phone: the live bar, the tiles, and the tab bar" width="300"></p>
 
 *Network names, addresses and passwords replaced with examples.*
 
@@ -128,18 +136,24 @@ Wi-Fi with its hotspot fallback, and updates straight from GitHub:
   green whatever you choose. Here the bar drains as the bed cools and only then
   says *Ready*, with the time and bed temperature you set.
 - **Every state restyled.** Idle, printing, paused, finished, cooling, ready,
-  error and offline each get two colours, an effect and a speed (stock offers
+  error and offline each get two colours, an effect, a speed, their own
+  brightness, and a time limit after which the bar moves on (stock offers
   three colours).
-- **Seventeen effects:** solid, breathe, fill, flash, chase, rainbow, gradient,
-  waves, scroll, theatre, scanner, meteor, fire, twinkle, sparkle, rain and
-  aurora. *Try* shows any look on the bar for a few seconds.
+- **Twenty-two effects:** solid, breathe, fill, flash, chase, rainbow,
+  gradient, waves, scroll, theatre, scanner, meteor, fire, twinkle, sparkle,
+  rain, aurora, heartbeat, strobe, candle, ripple and stack. *Try* shows any
+  look on the bar for a few seconds.
 - **Music mode.** A sound-level meter from the built-in microphone, with low,
   medium, high or auto sensitivity.
 - **Schedule.** Dark or dimmed by the clock; the time comes from the internet.
 - **Add-ons, with a store.** Show something else when the printer has nothing
   to say: a look, meters, an animation, a live meter from a web address, or
   the colour of the filament the printer is using (read from its AMS, on a
-  dual-nozzle X2D or H2D from whichever nozzle is in use).
+  dual-nozzle X2D or H2D from whichever nozzle is in use). From what a Bambu
+  printer reports: how much is left on the loaded spool, how damp the AMS is,
+  the time left on a print, the nozzle and bed heating up, and the chamber
+  warming. A maintenance reminder counts print hours and asks for a clean
+  after 200.
   Pick from the [store](addons/store), upload a file of your own, or have any
   program on your network post to the bar.
 - **Updates from GitHub.** The bar finds the newest release here, checks it
@@ -163,8 +177,9 @@ Wi-Fi with its hotspot fallback, and updates straight from GitHub:
   "progress":42}` to `panda/<id>/state/set`.
 - **A controller can drive it.** A home-automation system or script can post
   the printer's state; the bar follows it while it keeps posting.
-- **Its own web page**, with a live picture of the 25 LEDs and a Wi-Fi signal
-  meter. Works on a phone, needs no internet. The store's cards play each
+- **Its own web page**: the live bar first, tiles for the printer, Wi-Fi,
+  firmware and Home Assistant, and a card per state. Works on a phone, with a
+  tab bar along the bottom, and needs no internet. The store's cards play each
   add-on as the bar would, from a copy of the bar's own effects.
 
 **The button on the bar:** press once for the next Music sensitivity, twice to
@@ -319,14 +334,15 @@ use it). `GET /api` returns this list.
 | `GET /api/frame` | | Just the 25 LED colours, as 150 hex digits |
 | `POST /api/state` | `{"state":"printing","progress":42}` | A controller saying what the printer is doing; repeat at least every 45 s |
 | `POST /api/addon` | see below | A program saying what it wants shown |
-| `POST /api/addonfile` | `{"url":"https://…"}`, `{"file":{…}}`, `{"remove":true}` | An add-on the bar runs itself ([format](addons/store/README.md)) |
-| `POST /api/config` | any subset of the settings | `brightness`, `mode`, `music.sensitivity`, `states.<state>.{colour,colour2,effect,speed}`, `cool.{minutes,target}`, `schedule.{…}`, `time.{tz,zone}`, `addon.{show,when}`, `order`, `reversed`; `stripLength` (original Panda Status and Lux), `split` (RGB Controller) |
+| `POST /api/addonfile` | `{"url":"https://…"}`, `{"file":{…}}`, `{"remove":true}`, `{"maintenanceDone":true}` | An add-on the bar runs itself ([format](addons/store/README.md)); the last starts a maintenance reminder's count again |
+| `GET /api/log` | | A report for a bug report: version, state, settings and recent events, with nothing secret |
+| `POST /api/config` | any subset of the settings | `brightness`, `mode`, `music.sensitivity`, `states.<state>.{colour,colour2,effect,speed,level,limit}`, `cool.{minutes,target}`, `schedule.{…}`, `time.{tz,zone}`, `addon.{show,when}`, `order`, `reversed`; `stripLength` (original Panda Status and Lux), `split` (RGB Controller) |
 | `POST /api/preview` | `{"state":"cooling","progress":60,"seconds":8}` | Show a look for a few seconds |
 | `POST /api/printer` | `{"ip":"…","serial":"…","code":"…"}` | Pair with a Bambu printer; `{"forget":true}` unpairs. The code is never sent back out |
 | `POST /api/printer` | `{"type":"klipper","host":"…","port":7125,"key":"…"}` | Follow a Klipper printer through Moonraker instead; the key is optional and never sent back |
 | `POST /api/ha` | `{"on":true,"host":"…","port":1883,"user":"…","password":"…","prefix":"homeassistant"}` | Home Assistant over MQTT; anything left out is kept, the password is never sent back |
 | `POST /api/update` | `{"check":true}`, `{"install":true}`, `{"auto":true}` | Updates from GitHub |
-| `POST /api/wifi` | `{"ssid":"…","password":"…"}` | Save Wi-Fi and restart |
+| `POST /api/wifi` | `{"ssid":"…","password":"…"}` | Save Wi-Fi and restart to join it (no restart while a new version is on trial) |
 | `GET /api/wifi/scan` | | Networks in range |
 | `POST /api/ap` | `{"always":false,"ssid":"…","password":"…"}` | The hotspot |
 | `POST /api/slot`, `/api/reboot`, `/api/factory` | | Other slot; restart; clear settings |

@@ -1,0 +1,11 @@
+{
+    "id": "maintain",
+    "name": "Maintenance reminder",
+    "description": "Counts the hours your printer has been printing. After 200, the bar breathes amber when it is idle until you press Done here: time to clean the plate, check the belts and grease the rods.",
+    "author": "Sam",
+    "maintenance": {
+        "hours": 200,
+        "task": "Clean the plate, check the belts, grease the rods",
+        "colour": "#F59E0B"
+    }
+}
