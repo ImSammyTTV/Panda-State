@@ -43,13 +43,15 @@
 #include <HTTPClient.h>
 #include <memory>
 #include <mbedtls/sha256.h>
+#include <StreamString.h>
+#include <esp_timer.h>
 #include <PubSubClient.h>
 #include "page.h"
 #include "roots.h"
 
 /* What the firmware calls itself on its page and in /api/status. Plain and generic, so it says what it is on anyone's network. */
 #define FW_NAME "panda"
-#define FW_VERSION "0.7.13"
+#define FW_VERSION "0.7.14"
 /* Where new releases and the add-on store live. A release must carry a
    panda-<board>-custom-<version>.bin for each board and a SHA256SUMS.txt that lists them. */
 #define UPDATE_REPO "ImSammyTTV/Panda-State"
@@ -96,8 +98,17 @@
 #define STOCK_HOST "PandaStatusP2"
 #endif
 static const char *BUILD_ID = FW_VERSION " " __DATE__ " " __TIME__;
+/* Which board an image is for, where an upload can read it before anything is written: the section right after the app description, a few hundred bytes into every image. The description itself names only the library the firmware was built with, the same for every board, so without this a Lux image installed on a P2 without a word (0.7.13). */
+static const size_t BOARD_TAG_PREFIX = 18;   // "PANDA-STATE-BOARD:"
+extern "C" const char PANDA_BOARD_TAG[] __attribute__((section(".rodata_custom_desc"), used, aligned(4))) =
+  "PANDA-STATE-BOARD:" BOARD_ID ";" FW_VERSION " " __DATE__ " " __TIME__;
 
 static char hostName[33] = STOCK_HOST;  // what the bar answers to on the network, without ".local"
+/* Whether a name ends in ".local", in any case: mDNS names are not case-sensitive, and "printer.LOCAL" was sent to ordinary DNS, which cannot answer it. */
+static bool endsWithLocal(const String &name) {
+  return name.length() > 6 && name.substring(name.length() - 6).equalsIgnoreCase(".local");
+}
+
 static bool hostNameValid(const char *name) {
   const size_t len = strlen(name);
   if (len < 1 || len > 32 || name[0] == '-' || name[len - 1] == '-') return false;
@@ -136,6 +147,73 @@ struct PandaServer : WebServer {
   bool uploading() const { return (bool)_currentUpload; }
 };
 static PandaServer server(80);
+
+/* ---------------------------------------------------------------- log -- */
+
+/**
+ * What the owner did and what went wrong, for a bug report (GET /api/log, "Save a report" on the page).
+ *
+ * Kept in memory a restart does not clear, so after a crash the lines that led up to it are still there;
+ * a power cut does clear it. Only the loop task writes it: other tasks' errors are picked up by
+ * logWatch() once a second, from the same fields the page shows. Nothing secret goes in: no Wi-Fi name
+ * or password, no access code, no serial number, no Home Assistant user or password.
+ */
+static const uint32_t LOG_MAGIC = 0x50534C31;
+static const size_t LOG_SIZE = 3072;
+struct LogStore { uint32_t magic, head, used, starts; char text[LOG_SIZE]; };
+RTC_NOINIT_ATTR static LogStore logStore;
+
+static void logBegin() {
+  /* After a power cut this memory holds noise: anything that does not add up is started afresh. */
+  if (logStore.magic != LOG_MAGIC || logStore.head >= LOG_SIZE || logStore.used > LOG_SIZE) {
+    memset(&logStore, 0, sizeof logStore);
+    logStore.magic = LOG_MAGIC;
+  }
+  logStore.starts++;
+}
+
+static void logLine(const char *format, ...) {
+  char line[176];
+  const uint32_t up = millis() / 1000;
+  int at = snprintf(line, sizeof line, "%lu:%02lu:%02lu ", (unsigned long)(up / 3600), (unsigned long)(up / 60 % 60), (unsigned long)(up % 60));
+  va_list args;
+  va_start(args, format);
+  vsnprintf(line + at, sizeof line - at - 1, format, args);
+  va_end(args);
+  size_t length = strlen(line);
+  line[length++] = '\n';
+  for (size_t i = 0; i < length; i++) {
+    logStore.text[logStore.head] = line[i];
+    logStore.head = (logStore.head + 1) % LOG_SIZE;
+    if (logStore.used < LOG_SIZE) logStore.used++;
+  }
+}
+
+/* The log, oldest line first. Once it has gone round, the first line is a partial one and is left out. */
+static void logAppendTo(String &out) {
+  const size_t start = logStore.used < LOG_SIZE ? 0 : logStore.head;
+  size_t i = 0;
+  if (logStore.used == LOG_SIZE) while (i < LOG_SIZE && logStore.text[(start + i) % LOG_SIZE] != '\n') i++;
+  if (logStore.used == LOG_SIZE) i++;
+  for (; i < logStore.used; i++) out += logStore.text[(start + i) % LOG_SIZE];
+}
+
+static void handleLog();   // with loop(), below: it reads most of the firmware's state
+
+static const char *resetText(esp_reset_reason_t why) {
+  switch (why) {
+    case ESP_RST_POWERON: return "power on";
+    case ESP_RST_SW: return "restarted by the firmware";
+    case ESP_RST_PANIC: return "crash (panic)";
+    case ESP_RST_INT_WDT: return "crash (interrupt watchdog)";
+    case ESP_RST_TASK_WDT: return "crash (task watchdog)";
+    case ESP_RST_WDT: return "crash (watchdog)";
+    case ESP_RST_BROWNOUT: return "power dipped (brownout)";
+    case ESP_RST_DEEPSLEEP: return "woke from sleep";
+    case ESP_RST_EXT: return "reset pin";
+    default: return "unknown";
+  }
+}
 static Preferences prefs;
 
 /* ------------------------------------------------------------- looks -- */
@@ -176,10 +254,16 @@ static Look looks[ST_COUNT] = {
 };
 
 static uint8_t brightness = 100;     // 0-100, the same scale the stock bar uses
+#if defined(BOARD_RGB)
+static char order[4] = "RGB";   // the PWM channels are wired R, G, B (RGB_PINS); GRB is the WS2812 strips' order, and as the default here it swapped red and green
+#else
 static char order[4] = "GRB";
+#endif
 static bool reversed = false;
 /* The cool-down the bar works out for itself when paired: "ready" only once this many minutes have passed AND the bed is at or below the target. A controller that pushes states makes its own decision and ignores these. */
 static uint8_t coolMinutes = 10;
+/* How long an error is shown before the bar goes back to its idle look; 0 shows it until it clears. A failed print stays "failed" on the printer until the next one starts, which kept the error flashing for hours. */
+static uint16_t errorMinutes = 0;
 static uint8_t coolTarget = 35;
 /* The two modes the stock firmware had: follow the printer, or dance to the room. */
 enum Mode : uint8_t { MODE_STATUS, MODE_MUSIC, MODE_COUNT };
@@ -215,13 +299,13 @@ static int findName(const char *const *names, int count, const char *name) {
 static bool parseColour(const char *text, uint32_t &out) {
   if (!text) return false;
   if (*text == '#') text++;
-  if (strlen(text) < 6) return false;
-  char hex[7];
-  memcpy(hex, text, 6);
-  hex[6] = 0;
-  char *end = nullptr;
-  uint32_t value = strtoul(hex, &end, 16);
-  if (end != hex + 6) return false;
+  /* Six hex digits and nothing else in them: strtoul also took a sign, spaces and "0x", and "-00001" came out as the "auto" marker. What follows the six is left alone, since frames are runs of them. */
+  uint32_t value = 0;
+  for (int i = 0; i < 6; i++) {
+    const unsigned char c = text[i];   // the terminator is not a hex digit, so a short string stops here
+    if (!isxdigit(c)) return false;
+    value = value << 4 | (uint32_t)(isdigit(c) ? c - '0' : tolower(c) - 'a' + 10);
+  }
   out = value;
   return true;
 }
@@ -259,6 +343,23 @@ static String colourText(uint32_t colour) {
 
 /* The schedule's and the add-ons' share of the settings; they are defined further down, beside the things they describe. */
 static void extraConfigToJson(JsonDocument &doc);
+/* A whole number from a request, within lo..hi: a number, or a string holding one. Anything else is refused rather than read as 0, which is what ArduinoJson makes of a number too big for an int, and 0 passed the brightness check as "off". */
+static bool intIn(JsonVariantConst v, int lo, int hi, int &out) {
+  double d;
+  if (v.is<const char *>()) {
+    const char *text = v.as<const char *>();
+    char *end = nullptr;
+    d = strtod(text, &end);
+    if (end == text || *end) return false;
+  } else if (v.is<double>()) {
+    d = v.as<double>();
+  } else {
+    return false;
+  }
+  if (!(d >= lo && d <= hi)) return false;
+  out = (int)d;
+  return true;
+}
 static void faZoneChanged();   // with the file add-ons, below
 static const char *applyExtraConfig(JsonVariantConst doc);
 
@@ -273,6 +374,7 @@ static void configToJson(JsonDocument &doc) {
   doc["split"] = rgbSplit;
 #endif
   doc["cool"]["minutes"] = coolMinutes;
+  doc["error"]["minutes"] = errorMinutes;
   doc["cool"]["target"] = coolTarget;
   doc["mode"] = MODE_NAMES[mode];
   doc["music"]["sensitivity"] = SENS_NAMES[sensitivity];
@@ -292,8 +394,8 @@ static void configToJson(JsonDocument &doc) {
 static const char *applyConfig(JsonVariantConst doc) {
   if (const char *error = applyExtraConfig(doc)) return error;
   if (!doc["brightness"].isNull()) {
-    int value = doc["brightness"].as<int>();
-    if (value < 0 || value > 100) return "Brightness is 0-100";
+    int value;
+    if (!intIn(doc["brightness"], 0, 100, value)) return "Brightness is 0-100";
     brightness = value;
   }
   if (!doc["order"].isNull()) {
@@ -306,21 +408,26 @@ static const char *applyConfig(JsonVariantConst doc) {
   if (!doc["reversed"].isNull()) reversed = doc["reversed"].as<bool>();
 #if defined(BOARD_STATUS)
   if (!doc["stripLength"].isNull()) {
-    int value = doc["stripLength"].as<int>();
-    if (value < 1 || value > STRIP_MAX) return "The strip is 1-300 LEDs";
+    int value;
+    if (!intIn(doc["stripLength"], 1, STRIP_MAX, value)) return "The strip is 1-300 LEDs";
     stripLength = value;
   }
 #elif defined(BOARD_RGB)
   if (!doc["split"].isNull()) rgbSplit = doc["split"].as<bool>();
 #endif
   if (!doc["cool"]["minutes"].isNull()) {
-    int value = doc["cool"]["minutes"].as<int>();
-    if (value < 0 || value > 120) return "Cool-down is 0-120 minutes";
+    int value;
+    if (!intIn(doc["cool"]["minutes"], 0, 120, value)) return "Cool-down is 0-120 minutes";
     coolMinutes = value;
   }
+  if (!doc["error"]["minutes"].isNull()) {
+    int value;
+    if (!intIn(doc["error"]["minutes"], 0, 1440, value)) return "An error is shown for 0-1440 minutes (0: until it clears)";
+    errorMinutes = value;
+  }
   if (!doc["cool"]["target"].isNull()) {
-    int value = doc["cool"]["target"].as<int>();
-    if (value < 20 || value > 60) return "Bed target is 20-60";
+    int value;
+    if (!intIn(doc["cool"]["target"], 20, 60, value)) return "Bed target is 20-60";
     coolTarget = value;
   }
   if (!doc["mode"].isNull()) {
@@ -363,8 +470,8 @@ static const char *applyConfig(JsonVariantConst doc) {
       looks[at].effect = fx;
     }
     if (!one["speed"].isNull()) {
-      int speed = one["speed"].as<int>();
-      if (speed < 1 || speed > 100) return "Speed is 1-100";
+      int speed;
+      if (!intIn(one["speed"], 1, 100, speed)) return "Speed is 1-100";
       looks[at].speed = speed;
     }
   }
@@ -421,7 +528,20 @@ static void loadConfig() {
   cfgSaved = text;
   JsonDocument doc;
   if (deserializeJson(doc, text)) return;
-  applyConfig(doc.as<JsonVariantConst>());
+  /* A field at a time, and a look at a time, so one this build does not know (stored by a newer one, before going back to this) costs only itself, not every field after it. */
+  for (JsonPairConst field : doc.as<JsonObjectConst>()) {
+    if (!strcmp(field.key().c_str(), "states")) {
+      for (JsonPairConst state : field.value().as<JsonObjectConst>()) {
+        JsonDocument one;
+        one["states"][state.key()] = state.value();
+        applyConfig(one.as<JsonVariantConst>());
+      }
+    } else {
+      JsonDocument one;
+      one[field.key()] = field.value();
+      applyConfig(one.as<JsonVariantConst>());
+    }
+  }
 }
 
 /* ---------------------------------------------------- printer link -- */
@@ -486,6 +606,7 @@ static struct {
   char key[20];                            // the key whose value comes next
   char value[16]; uint8_t valueLength;
   char path[8][14]; uint8_t depth;         // the key of each open container, "" for an array element
+  uint16_t overflow;                       // containers open below the eighth level: counted only, so their closes do not unwind the levels above
   char gcode[12]; int percent; float bed; bool gotGcode, gotPercent, gotBed;
   int trayNow; bool gotTrayNow;
   int extState; bool gotExtState;
@@ -534,6 +655,7 @@ static void scanReset() { memset(&scan, 0, sizeof scan); scan.slotId = scan.unit
 static void scanFinish() {
   scan.value[scan.valueLength] = 0;
   scan.capturing = false;
+  if (scan.overflow) { scan.key[0] = 0; return; }   // nothing the bar reads is that deep, and the path no longer says where it is
   const char *k = scan.key, *v = scan.value;
   const char *p1 = scanUp(1), *p2 = scanUp(2), *p3 = scanUp(3);
   if (!strcmp(k, "gcode_state")) { strlcpy(scan.gcode, v, sizeof scan.gcode); scan.gotGcode = true; }
@@ -571,6 +693,7 @@ static void scanTrayDone(bool external) {
 
 /* A container closes: whatever it held is complete. */
 static void scanClose() {
+  if (scan.overflow) { scan.overflow--; return; }
   if (!scan.depth) return;
   const bool element = !scan.path[scan.depth - 1][0];
   const char *closing = scan.path[scan.depth - 1];
@@ -591,9 +714,9 @@ static void scanClose() {
 }
 
 static void scanOpen(const char *key) {
-  if (scan.depth < 8) strlcpy(scan.path[scan.depth], key, sizeof scan.path[0]);
-  else scan.path[7][0] = '\x02';        // too deep to matter: nothing the bar reads lives there
-  if (scan.depth < 8) scan.depth++;
+  /* Too deep to matter: nothing the bar reads lives there. It used to overwrite the eighth level's key and not count the level, so its close then unwound one that was still open, and the trays after it were read in the wrong place. */
+  if (scan.depth < 8) { strlcpy(scan.path[scan.depth], key, sizeof scan.path[0]); scan.depth++; }
+  else if (scan.overflow < 0xFFFF) scan.overflow++;
 }
 
 static void scanFeed(char c) {
@@ -727,7 +850,7 @@ static void prWait(uint32_t ms) {
 static void klipperPoll(const String &host, uint16_t port, const String &key) {
   String address = host;
   /* The HTTP client does not look up .local names itself; mDNS does. */
-  if (host.endsWith(".local")) {
+  if (endsWithLocal(host)) {
     IPAddress found = MDNS.queryHost(host.substring(0, host.length() - 6), 2000);
     if (found == IPAddress()) { prConnected = false; prSetError("Could not find that .local name"); prWait(10000); return; }
     address = found.toString();
@@ -740,6 +863,7 @@ static void klipperPoll(const String &host, uint16_t port, const String &key) {
     "/printer/objects/query?webhooks=state&print_stats=state&display_status=progress&virtual_sdcard=progress&heater_bed=temperature";
   if (!http.begin(net, url)) { prConnected = false; prSetError("That address does not work"); prWait(15000); return; }
   if (key.length()) http.addHeader("X-Api-Key", key);
+  http.useHTTP10(true);   // the answer is read straight off the connection below, which a chunked HTTP/1.1 reply would garble
   const int code = http.GET();
   if (code <= 0) { http.end(); prConnected = false; prSetError("Klipper not reachable"); prWait(10000); return; }
   if (code == 401 || code == 403) { http.end(); prConnected = false; prSetError("Moonraker wants an API key"); prWait(30000); return; }
@@ -755,6 +879,8 @@ static void klipperPoll(const String &host, uint16_t port, const String &key) {
   http.end();
   if (bad) { prConnected = false; prSetError("Moonraker's answer did not read"); prWait(10000); return; }
   JsonObjectConst st = doc["result"]["status"];
+  /* Without it every field below falls back to "ready" and "standby", and an answer from something that is not Moonraker read as an idle printer. */
+  if (st.isNull()) { prConnected = false; prSetError("That does not look like Moonraker"); prWait(10000); return; }
   const char *hooks = st["webhooks"]["state"] | "ready";
   const char *ps = st["print_stats"]["state"] | "standby";
   const char *gcode = "IDLE";
@@ -822,7 +948,7 @@ static void printerTask(void *) {
     net.write(packet, n + 2);
     if (!netRead(net, buf, 4, 10000) || buf[0] != 0x20) { prSetError("Printer did not answer the sign-in"); net.stop(); prWait(15000); continue; }
     if (buf[3] != 0) {
-      prSetError(buf[3] == 4 || buf[3] == 5 ? "Wrong access code or serial" : "Printer refused the sign-in");
+      prSetError(buf[3] == 4 || buf[3] == 5 ? "Wrong access code" : "Printer refused the sign-in");   // the serial is not part of the sign-in, so it cannot be what was refused
       net.stop(); prWait(30000); continue;
     }
 
@@ -844,8 +970,13 @@ static void printerTask(void *) {
     prConnected = true;
     prSetError("");
     uint32_t lastPing = millis(), lastHeard = millis();
+    const uint32_t linkedAt = millis();
+    bool reported = false;
     while (!prRestart) {
-      if (millis() - lastPing > 30000) { const uint8_t ping[2] = {0xC0, 0}; net.write(ping, 2); lastPing = millis(); }
+      /* The printer takes the sign-in with any serial number, and the subscription to a wrong one simply never delivers: the page said "waiting for its first message" for ever. A pushall is answered at once, so a long silence means the serial. */
+      if (!reported && !prError[0] && millis() - linkedAt > 20000) prSetError("No reports: check the printer's serial");
+      /* Every 10 s rather than every 30: an answer to one is what keeps a quiet printer's last report counted as current (below). */
+      if (millis() - lastPing > 10000) { const uint8_t ping[2] = {0xC0, 0}; net.write(ping, 2); lastPing = millis(); }
       if (millis() - lastHeard > 90000) break;
       if (net.available() <= 0) { if (!net.connected()) break; vTaskDelay(pdMS_TO_TICKS(10)); continue; }
       if (!netRead(net, buf, 1, 5000)) break;
@@ -858,6 +989,8 @@ static void printerTask(void *) {
       } while ((buf[0] & 0x80) && shift < 28);
       if (!ok) break;
       lastHeard = millis();
+      /* PINGRESP. Some printers report only what changes, and a cold idle one can say nothing for minutes: its last report stays true while it still answers, so it is not shown as offline after 30 s. Only once this link has had a real report. */
+      if ((head >> 4) == 13 && reported) prLastMsgAt = millis();   // this link's own report, not one left from before a reconnect: a print that ended meanwhile would otherwise stay "printing"
       if ((head >> 4) != 3) { if (!netSkip(net, length, buf, sizeof buf)) break; continue; }
       /* PUBLISH: topic, then (QoS above 0 only) a packet id, then the JSON. */
       if (length < 2 || !netRead(net, buf, 2, 5000)) break;
@@ -875,6 +1008,7 @@ static void printerTask(void *) {
       }
       if (!ok) break;
       scanCommit();
+      if (!reported) { reported = true; if (prError[0]) prSetError(""); }
     }
     net.stop();
     prConnected = false;
@@ -1211,8 +1345,8 @@ static const char *applyExtraConfig(JsonVariantConst doc) {
   if (!schedule["from"].isNull() && !parseClock(schedule["from"].as<const char *>(), schedFrom)) return "Times are HH:MM, 24-hour";
   if (!schedule["to"].isNull() && !parseClock(schedule["to"].as<const char *>(), schedTo)) return "Times are HH:MM, 24-hour";
   if (!schedule["level"].isNull()) {
-    int value = schedule["level"].as<int>();
-    if (value < 0 || value > 100) return "Brightness is 0-100";
+    int value;
+    if (!intIn(schedule["level"], 0, 100, value)) return "Brightness is 0-100";
     schedLevel = value;
   }
   if (!doc["time"]["tz"].isNull()) {
@@ -1244,7 +1378,7 @@ enum Source : uint8_t { SRC_NONE, SRC_PREVIEW, SRC_CONTROLLER, SRC_PRINTER };
 static const char *SRC_NAMES[] = {"none", "preview", "controller", "printer"};
 
 /* What to show, how full "fill" is, and who decided. A controller that is speaking wins over the bar's own printer link: it is assumed to know more. */
-static State shown(float &fill, Source &source) {
+static State shownAsTold(float &fill, Source &source) {
   if (previewUntil && millis() < previewUntil) { fill = previewProgress; source = SRC_PREVIEW; return previewState; }
   previewUntil = 0;
   if (everPushed && millis() - lastPushAt <= LINK_TIMEOUT_MS) { fill = progress; source = SRC_CONTROLLER; return current; }
@@ -1252,6 +1386,28 @@ static State shown(float &fill, Source &source) {
   fill = 0;
   source = SRC_NONE;
   return ST_OFFLINE;
+}
+
+/* When the error now showing began, 0 when none is. Kept by the loop task alone (trackError); shown() is also asked from Home Assistant's task and only reads it. */
+static volatile uint32_t errorSince = 0;
+
+static void trackError() {
+  float fill;
+  Source source;
+  const State state = shownAsTold(fill, source);
+  if (source == SRC_PREVIEW) return;   // a look being tried says nothing about the printer
+  if (state != ST_ERROR) { errorSince = 0; return; }
+  if (!errorSince) errorSince = millis() | 1;
+}
+
+/* The same, except that an error shown for longer than the owner wants gives way to the idle look (and an add-on, if one shows then) until it clears. A look being tried is always shown as it is. */
+static State shown(float &fill, Source &source) {
+  const State state = shownAsTold(fill, source);
+  if (state == ST_ERROR && source != SRC_PREVIEW && errorMinutes) {
+    const uint32_t since = errorSince;
+    if (since && millis() - since > errorMinutes * 60000UL) { fill = 0; return ST_IDLE; }
+  }
+  return state;
 }
 
 static void hsv(float h, uint8_t &r, uint8_t &g, uint8_t &b) {
@@ -1290,7 +1446,10 @@ static void along(const float pal[2][3], float x, float out[3]) {
   mix(pal[i % 2], pal[(i + 1) % 2], f - i, out);
 }
 
-static void paintEffect(uint8_t effect, uint32_t colour, uint32_t colour2, uint8_t speed, float t, float dt) {
+/* x reduced to [0, period), worked in double and handed back as a float. The lamp effects' phases are taken this way so they stay exact however long the bar has been on, and do not jump when a shorter clock starts again (they did, every 2 h 47 min, 0.7.12). */
+static float cyc(double x, double period) { return (float)fmod(x, period); }
+
+static void paintEffect(uint8_t effect, uint32_t colour, uint32_t colour2, uint8_t speed, double t, float dt) {
   const float pal[2][3] = {
     {(float)((colour >> 16) & 255), (float)((colour >> 8) & 255), (float)(colour & 255)},
     {(float)((colour2 >> 16) & 255), (float)((colour2 >> 8) & 255), (float)(colour2 & 255)},
@@ -1302,6 +1461,12 @@ static void paintEffect(uint8_t effect, uint32_t colour, uint32_t colour2, uint8
   static float heat[LED_COUNT], glow[LED_COUNT], tint[LED_COUNT][3];
   static float drops[8];
   static int dropCount = 0;
+  /* Each effect's phases, once per frame: the work in double is ten calls, not ten for every LED. */
+  const double TAU = 6.283185307179586, sd = s;
+  const float waveDrift = cyc(t * 0.05 * sd, 1), waveBend = cyc(t * 0.6 * sd, TAU), waveLevel = cyc(t * 0.9 * sd, TAU);
+  const float scroll = cyc(t * 0.07 * sd, 1), scanner = cyc(t * sd * 1.5, TAU), meteor = cyc(t * sd * 2.6, N + 14);
+  const int theatre = (int)cyc(t * sd * 3, 3);
+  const float aurora1 = cyc(t * sd * 0.35, TAU), aurora2 = cyc(t * sd * 0.25, TAU), auroraDrift = cyc(t * 0.02 * sd, 1);
 
   for (int i = 0; i < N; i++) {
     float *c = fxColour[i];
@@ -1310,18 +1475,18 @@ static void paintEffect(uint8_t effect, uint32_t colour, uint32_t colour2, uint8
     switch (effect) {
       case FX_GRADIENT: mix(pal[0], pal[1], (float)i / (N - 1), c); break;
       case FX_WAVES:
-        along(pal, (float)i / N + t * 0.05f * s + 0.12f * sinf(t * 0.6f * s + i / 3.0f), c);
-        k = 0.55f + 0.45f * sinf(i / 2.5f - t * 0.9f * s);
+        along(pal, (float)i / N + waveDrift + 0.12f * sinf(waveBend + i / 3.0f), c);
+        k = 0.55f + 0.45f * sinf(i / 2.5f - waveLevel);
         break;
-      case FX_SCROLL: along(pal, (float)i / N + t * 0.07f * s, c); break;
+      case FX_SCROLL: along(pal, (float)i / N + scroll, c); break;
       case FX_THEATRE: {
-        const bool on = (i + (int)(t * s * 3)) % 3 == 0;
+        const bool on = (i + theatre) % 3 == 0;
         memcpy(c, on ? pal[0] : pal[1], sizeof(float) * 3);
         k = on ? 1 : 0.25f;
         break;
       }
       case FX_SCANNER: {
-        const float pos = (N - 1) * (0.5f - 0.5f * cosf(t * s * 1.5f));
+        const float pos = (N - 1) * (0.5f - 0.5f * cosf(scanner));
         const float m = constrain(1 - fabsf(i - pos) / 3, 0.0f, 1.0f);
         mix(pal[1], pal[0], m, c);
         k = 0.25f + 0.75f * m;
@@ -1329,7 +1494,7 @@ static void paintEffect(uint8_t effect, uint32_t colour, uint32_t colour2, uint8
       }
       case FX_METEOR: {
         /* A soft wide head and a long tail behind it; placed between LEDs so it glides rather than hops (a hop between LEDs reads as flicker). */
-        const float pos = fmodf(t * s * 2.6f, N + 14);
+        const float pos = meteor;
         const float behind = pos - i;
         const float glowAt = behind < 0 ? expf(-(behind * behind) / 2.2f) : expf(-behind / 4.5f);
         along(pal, 1 - (float)i / N * 0.6f, c);
@@ -1337,8 +1502,8 @@ static void paintEffect(uint8_t effect, uint32_t colour, uint32_t colour2, uint8
         break;
       }
       case FX_AURORA: {
-        const float v = constrain(0.5f + 0.5f * sinf(i * 0.35f + t * s * 0.35f) * sinf(i * 0.17f - t * s * 0.25f + 1.7f) + 0.15f, 0.0f, 1.0f);
-        along(pal, 0.5f * v + (float)i / N * 0.3f + t * 0.02f * s, c);
+        const float v = constrain(0.5f + 0.5f * sinf(i * 0.35f + aurora1) * sinf(i * 0.17f - aurora2 + 1.7f) + 0.15f, 0.0f, 1.0f);
+        along(pal, 0.5f * v + (float)i / N * 0.3f + auroraDrift, c);
         k = 0.5f + 0.5f * v;
         break;
       }
@@ -1505,7 +1670,7 @@ static void render() {
   const float dt = lastFrameMs ? min(0.1f, (millis() - lastFrameMs) / 1000.0f) : 0.025f;
   lastFrameMs = millis();
   const bool lampFx = !dark && look.effect >= FX_GRADIENT;
-  if (lampFx) paintEffect(look.effect, look.colour, secondColour(look), look.speed, t, dt);
+  if (lampFx) paintEffect(look.effect, look.colour, secondColour(look), look.speed, esp_timer_get_time() / 1e6, dt);   // microseconds since start in 64 bits: no wrap for centuries
 
   for (int i = 0; i < LED_COUNT; i++) {
     uint8_t r = baseR, g = baseG, b = baseB;
@@ -1661,6 +1826,32 @@ static bool otherSlot(const esp_partition_t *&part, esp_app_desc_t &desc) {
   return part && esp_ota_get_partition_description(part, &desc) == ESP_OK;
 }
 
+/* The board and build an image was made for, from its tag; both empty for an image without one (stock, or Panda State before 0.7.14). The tag sits a few hundred bytes in, so the first part of an image is enough. */
+static void imageTag(const uint8_t *data, size_t length, char *board, size_t boardSize, char *build, size_t buildSize) {
+  board[0] = build[0] = 0;
+  const size_t look = min(length, (size_t)640);
+  for (size_t at = 0; at + BOARD_TAG_PREFIX < look; at++) {
+    if (memcmp(data + at, PANDA_BOARD_TAG, BOARD_TAG_PREFIX)) continue;
+    size_t i = 0, j = at + BOARD_TAG_PREFIX;
+    for (; j < look && data[j] != ';'; j++) {
+      if ((!islower(data[j]) && !isdigit(data[j])) || i + 1 >= boardSize) { board[0] = 0; return; }   // not a tag after all
+      board[i++] = (char)data[j];
+    }
+    if (j >= look || !i) { board[0] = 0; return; }   // no ";": not a tag after all
+    board[i] = 0;
+    for (i = 0, j++; j < look && data[j] && data[j] >= ' ' && i + 1 < buildSize; j++) build[i++] = (char)data[j];
+    build[i] = 0;
+    return;
+  }
+}
+
+/* The other slot's tag, read straight from the flash. */
+static void otherSlotTag(const esp_partition_t *part, char *board, size_t boardSize, char *build, size_t buildSize) {
+  static uint8_t head[640];
+  board[0] = build[0] = 0;
+  if (part && esp_partition_read(part, 0, head, sizeof head) == ESP_OK) imageTag(head, sizeof head, board, boardSize, build, buildSize);
+}
+
 /* Hand the bar to the firmware in the other slot. Returns only if there is nothing bootable there. */
 static void bootOtherSlot() {
   const esp_partition_t *part;
@@ -1692,6 +1883,7 @@ static bool imageMarkedGood() {
 
 /* The trial is failed: hand the bar to the other slot. Returns only if there is nothing there to go back to (flashed by USB), and then this build carries on as it is. */
 static void failTrial() {
+  logLine("Trial failed: handing the bar back to the other slot");
   /* The bootloader's own rollback first, if stock's bootloader has it; our own switch of slots if it does not. */
   esp_ota_mark_app_invalid_rollback_and_reboot();
   bootOtherSlot();
@@ -1712,6 +1904,7 @@ static void watchTrial() {
       prefs.putString("okbuild", BUILD_ID);
       if (prefs.isKey("micblame")) prefs.remove("micblame");
       onTrial = false;
+      logLine("Trial passed: this version is kept");
     } else if (!connectedSince && millis() - trialFrom > trialAllow) {
       failTrial();   // if it comes back there is nothing to go back to: carry on and offer the setup network
     } else if (!apUp && !wifiSsid.length()) {
@@ -1813,7 +2006,14 @@ static void sendResult(bool ok, const char *message = nullptr) {
 }
 
 static bool readBody(JsonDocument &doc) {
-  if (!server.hasArg("plain") || deserializeJson(doc, server.arg("plain"))) {
+  /* The largest the page sends is an add-on file with its address, at most 12,000 characters. The web server has already taken the whole body by now, so this only keeps a huge one from being parsed as well, but that is most of the memory it would cost. */
+  if (!server.hasArg("plain")) { sendResult(false, "Body must be JSON"); return false; }
+  const String body = server.arg("plain");   // a copy either way: taken once
+  if (body.length() > 16384) {
+    sendResult(false, "That is far bigger than anything the bar takes");
+    return false;
+  }
+  if (deserializeJson(doc, body)) {
     sendResult(false, "Body must be JSON");
     return false;
   }
@@ -1965,6 +2165,10 @@ static void handleStatus() {
     otherDoc["project"] = desc.project_name;
     otherDoc["version"] = desc.version;
     otherDoc["built"] = String(desc.date) + " " + desc.time;
+    /* What the description cannot say: that it is Panda State, which version, for which board. */
+    char board[16], build[48];
+    otherSlotTag(other, board, sizeof board, build, sizeof build);
+    if (board[0]) { otherDoc["board"] = board; otherDoc["panda"] = build; }
     // Whether it is this firmware again (an older Panda State) or something else, normally stock: the page offers the backup for the latter.
     const esp_app_desc_t *mine = esp_ota_get_app_description();
     otherDoc["ours"] = mine && strcmp(mine->project_name, desc.project_name) == 0;
@@ -2011,11 +2215,19 @@ static void handleState() {
 static void handleConfig() {
   JsonDocument doc;
   if (!readBody(doc)) return;
+  {
+    String keys;
+    for (JsonPairConst field : doc.as<JsonObjectConst>()) { if (keys.length()) keys += ", "; keys += field.key().c_str(); }
+    logLine("Settings changed: %s", keys.c_str());
+  }
+  /* All or nothing: fields are applied one after another, and a bad one used to leave the good ones before it changed on the bar but unsaved. */
+  JsonDocument before;
+  configToJson(before);
   const char *error = applyConfig(doc.as<JsonVariantConst>());
-  if (error) return sendResult(false, error);
+  if (error) { applyConfig(before.as<JsonVariantConst>()); logLine("  refused: %s", error); return sendResult(false, error); }
   saveConfig();
   // Say so when the store refused it: the change works now but would be gone after a restart.
-  if (!cfgSaveOk) return sendResult(false, "Changed, but the bar could not save it: it will be lost on a restart");
+  if (!cfgSaveOk) { logLine("  not saved: the settings store is full"); return sendResult(false, "Changed, but the bar could not save it: it will be lost on a restart"); }
   sendResult(true);
 }
 
@@ -2054,15 +2266,16 @@ static Addon *addonSlotFor(const char *id) {
 }
 
 /* Checks an add-on post (or a file add-on's content, which has the same shape) and puts it in its slot. Returns why not, or nullptr. */
-static const char *addonApply(JsonVariantConst doc, bool *picked) {
+/* dryRun: every check, and nothing changed, so a file can be judged before it replaces one that works. */
+static const char *addonApply(JsonVariantConst doc, bool *picked, bool dryRun = false) {
   const char *id = doc["id"].as<const char *>();
   if (const char *bad = addonIdError(id)) return bad;
   xSemaphoreTake(addonLock, portMAX_DELAY);
   const char *error = nullptr;
   Addon *slot = addonById(id);
   if (doc["remove"].as<bool>()) {
-    if (slot) slot->used = false;
-  } else if (!(slot = addonSlotFor(id))) {
+    if (slot && !dryRun) slot->used = false;
+  } else if (!dryRun && !(slot = addonSlotFor(id))) {
     error = "Four add-ons are already posting; remove one first";
   } else {
     error = [&]() -> const char * {
@@ -2115,7 +2328,7 @@ static const char *addonApply(JsonVariantConst doc, bool *picked) {
   } else {
     return "Send one of look, meters or frame";
   }
-  *slot = next;
+  if (!dryRun) *slot = next;
   return nullptr;
     }();
   }
@@ -2139,15 +2352,16 @@ static void handleAddon() {
 /* What the bar can be asked to do, for anyone writing something to talk to it. */
 static const char API_DOC[] PROGMEM = R"JSON({"about":"Panda State, open firmware for BIQU Panda Status P2, Panda Status, Panda Lux RGB and Panda RGB Controller (board in /api/status). JSON in, JSON out, no sign-in; every POST answers {ok, message?}.",
 "endpoints":[
+{"call":"GET /api/log","does":"A report for a bug report: version, state, settings and a log of what the owner did and what went wrong, kept across restarts. Holds no Wi-Fi name or password, access code, serial or Home Assistant login"},
 {"call":"GET /api/status","does":"Everything: what is showing and why, printer link, microphone, clock, add-ons, settings, the 25 LEDs as hex"},
 {"call":"POST /api/state","body":{"state":"idle|printing|paused|finished|cooling|ready|error|off","progress":"0-100"},"does":"A controller saying what the printer is doing. Repeat at least every 45 s; when it stops, the bar's own printer link takes over"},
 {"call":"POST /api/addon","body":{"id":"a-z0-9-_ up to 15","name":"shown on the page","ttl":"seconds this post stays valid, default 120","look":{"colour":"#RRGGBB","colour2":"#RRGGBB","effect":"any effect listed under /api/config","speed":"1-100","progress":"0-100"},"meters":[{"value":"0-100","colour":"#RRGGBB"}],"frame":"25 colours as a list of #RRGGBB or 150 hex digits"},"does":"An add-on saying what it wants shown: send ONE of look, meters (1-4) or frame, and keep posting. Shown only if picked under Add-ons. {id, remove:true} withdraws it"},
-{"call":"POST /api/config","body":{"brightness":"0-100","mode":"status|music","music":{"sensitivity":"low|medium|high|auto"},"states":{"<state>":{"colour":"#RRGGBB","colour2":"#RRGGBB or auto","effect":"solid|breathe|fill|flash|chase|rainbow|gradient|waves|scroll|theatre|scanner|meteor|fire|twinkle|sparkle|rain|aurora","speed":"1-100"}},"cool":{"minutes":"0-120","target":"20-60"},"schedule":{"enabled":true,"from":"HH:MM","to":"HH:MM","level":"0-100"},"time":{"tz":"POSIX rule","zone":"label"},"addon":{"show":"<id> or empty","when":"idle|always"},"order":"GRB|RGB|...","reversed":false},"does":"Change any subset of the settings; saved"},
+{"call":"POST /api/config","body":{"brightness":"0-100","mode":"status|music","music":{"sensitivity":"low|medium|high|auto"},"states":{"<state>":{"colour":"#RRGGBB","colour2":"#RRGGBB or auto","effect":"solid|breathe|fill|flash|chase|rainbow|gradient|waves|scroll|theatre|scanner|meteor|fire|twinkle|sparkle|rain|aurora","speed":"1-100"}},"error":{"minutes":"0-1440: how long an error is shown before the idle look returns; 0 until it clears"},"cool":{"minutes":"0-120","target":"20-60"},"schedule":{"enabled":true,"from":"HH:MM","to":"HH:MM","level":"0-100"},"time":{"tz":"POSIX rule","zone":"label"},"addon":{"show":"<id> or empty","when":"idle|always"},"order":"GRB|RGB|...","reversed":false},"does":"Change any subset of the settings; saved"},
 {"call":"POST /api/preview","body":{"state":"<state>","progress":"0-100","seconds":"1-120"},"does":"Show a state briefly without it counting as the printer's"},
 {"call":"POST /api/printer","body":{"ip":"...","serial":"...","code":"..."},"does":"Pair with a Bambu printer; {forget:true} unpairs"},
 {"call":"POST /api/printer","body":{"type":"klipper","host":"IP or name.local","port":"7125","key":"Moonraker API key, optional"},"does":"Follow a Klipper printer through Moonraker instead (polled every 2 s)"},
 {"call":"POST /api/ha","body":{"on":"true|false","host":"broker","port":"1883","user":"...","password":"...","prefix":"homeassistant"},"does":"Home Assistant over MQTT with discovery: a light, sensors and (P2) a Mode select appear by themselves. <topic>/state/set takes the same JSON as POST /api/state. Status in /api/status under homeAssistant"},
-{"call":"POST /api/wifi","body":{"ssid":"...","password":"..."},"does":"Save Wi-Fi and restart"},
+{"call":"POST /api/wifi","body":{"ssid":"...","password":"..."},"does":"Save Wi-Fi and restart to join it (joined without a restart while a new version is on trial)"},
 {"call":"GET /api/wifi/scan","does":"Networks in range. The first call starts a scan and answers {scanning:true}; ask again for {networks:[{ssid,rssi,open}]}. ?again starts a fresh one"},
 {"call":"POST /api/ap","body":{"always":"true|false","ssid":"1-32","password":"8-63, or empty for the default"},"does":"The bar's own hotspot: by default it comes up after a minute without Wi-Fi; always keeps it on. At 192.168.4.1"},
 {"call":"POST /api/addonfile","body":{"url":"https://... an add-on file to fetch at every start","file":"or the add-on file itself, up to 4000 characters","remove":true},"does":"An add-on the bar runs itself: look, meters or frame as above, or frames {fps, list} for an animation, or source {url, path, min, max, colour, every} for a live meter read from a web address, or filament {effect, speed} for the colour of the filament the printer is using. It is shown as soon as it loads. Its state is in /api/status under addonFile"},
@@ -2171,8 +2385,10 @@ static void handleWifi() {
   if (prefs.getString("ssid", "") != ssid || prefs.getString("pass", "") != (pass ? pass : "")) {
     if (had) { prefs.putString("ssid", oldSsid); prefs.putString("pass", oldPass); }
     else { prefs.remove("ssid"); prefs.remove("pass"); }
+    logLine("Wi-Fi details not saved: the settings store is full");
     return sendResult(false, "The bar could not save that: its settings store is full. Removing an add-on file makes room.");
   }
+  logLine("Wi-Fi details changed%s", onTrial ? " (on trial: joining without a restart)" : "; restarting to join");
   if (onTrial) {
     /* On trial a restart may be the end of it: a bootloader that rolls back takes a second start of an unproven image as its failure. So the network is joined as the bar stands, and the wait for it starts again from here. */
     wifiSsid = ssid;
@@ -2250,6 +2466,7 @@ static void handlePrinter() {
   if (!readBody(doc)) return;
   String ip, serial, code;
   const bool klipper = !doc["forget"].as<bool>() && strcmp(doc["type"] | "bambu", "klipper") == 0;
+  logLine("Printer pairing changed: %s", doc["forget"].as<bool>() ? "unpaired" : klipper ? "Klipper" : "Bambu Lab");
   uint16_t port = 7125;
   if (klipper) {
     ip = doc["host"] | "";
@@ -2322,8 +2539,14 @@ static void handleSlot() {
   const esp_partition_t *part;
   esp_app_desc_t desc;
   if (!otherSlot(part, desc)) return sendResult(false, "There is no firmware in the other slot");
+  {
+    char board[16], build[48];
+    otherSlotTag(part, board, sizeof board, build, sizeof build);
+    if (board[0] && strcmp(board, BOARD_ID)) return sendResult(false, "The other slot holds Panda State for another board, so the bar stays on this one");
+  }
   /* Checked in full before promising anything: a slot left half-written by a failed update still has a readable header. */
-  if (esp_ota_set_boot_partition(part) != ESP_OK) return sendResult(false, "The firmware in the other slot does not check out, so the bar stays on this one");
+  if (esp_ota_set_boot_partition(part) != ESP_OK) { logLine("Switch slot refused: the other slot's firmware does not check out"); return sendResult(false, "The firmware in the other slot does not check out, so the bar stays on this one"); }
+  logLine("Switching to the other slot (%s %s)", desc.project_name, desc.version);
   sendResult(true, "Restarting into the other slot");
   delay(500);
   /* Not bootOtherSlot(): that sets the boot slot again, and a second write lands on the boot record's other entry, the one for the slot being left. With both entries on the new slot a failed trial there "went back" to itself first, and the slot left behind had lost its good mark (0.7.12). */
@@ -2335,6 +2558,7 @@ static void handleSlot() {
 
 /* Forget everything this firmware has saved (looks, mode, pairing, Wi-Fi) and start again. Stock's own settings are a separate namespace and are not touched, so the bar comes back on the Wi-Fi and pairing stock had. */
 static void handleFactory() {
+  logLine("Settings reset by the owner");
   /* The note that this build has proved itself is not a setting. Without it the restart is a trial again, and a bar reset because its Wi-Fi changed would wait two minutes with no setup network and then hand itself to the other slot. */
   const String proven = prefs.getString("okbuild", "");
   prefs.clear();
@@ -2345,6 +2569,7 @@ static void handleFactory() {
 }
 
 static void handleReboot() {
+  logLine("Restart asked for from the page");
   sendResult(true, "Restarting");
   delay(500);
   ESP.restart();
@@ -2352,11 +2577,20 @@ static void handleReboot() {
 
 static bool uploadOk = false;   // this upload began an update and nothing has gone wrong with it
 static bool uploadOnTrial = false;   // it was turned away because the running build has not proved itself yet
+static bool uploadFirst = false;     // the next piece is the start of the file
+static char uploadBoard[16] = "";    // the board the file was made for, when it was turned away for being another one's
 static void handleUpdateDone() {
   const bool ok = uploadOk;
   uploadOk = false;
-  if (!ok && uploadOnTrial) { uploadOnTrial = false; return sendResult(false, TRIAL_NO_UPDATE); }
-  if (!ok) return sendResult(false, Update.hasError() ? Update.errorString() : "No firmware file arrived, or another update is already running");
+  if (!ok && uploadOnTrial) { uploadOnTrial = false; logLine("Firmware upload refused: this version is on trial"); return sendResult(false, TRIAL_NO_UPDATE); }
+  if (!ok && uploadBoard[0]) {
+    const String why = String("That file is Panda State for another board (") + uploadBoard + "); this is a " BOARD_NAME ", whose files are named panda-" BOARD_ID "-custom-<version>.bin. Nothing was written.";
+    logLine("Firmware upload refused: made for the %s board", uploadBoard);
+    uploadBoard[0] = 0;
+    return sendResult(false, why.c_str());
+  }
+  if (!ok) { logLine("Firmware upload failed: %s", Update.hasError() ? Update.errorString() : "no file, or another update running"); return sendResult(false, Update.hasError() ? Update.errorString() : "No firmware file arrived, or another update is already running"); }
+  logLine("Firmware uploaded: restarting into it");
   sendResult(true, "Installed. Restarting into it.");
   delay(800);
   ESP.restart();
@@ -2372,9 +2606,18 @@ static void handleUpdateChunk() {
     /* Refused, without an error of its own, while an update from GitHub is being written: there is one updater and it is busy. */
     /* Not while this build is on trial either: the other slot holds the last firmware known to work, and it is where a failed trial goes back to. */
     uploadOnTrial = onTrial;
+    uploadFirst = true;
+    uploadBoard[0] = 0;
     uploadOk = !onTrial && Update.begin(UPDATE_SIZE_UNKNOWN);
     barProgress = uploadOk ? 0 : -1;
   } else if (upload.status == UPLOAD_FILE_WRITE) {
+    /* The first piece (1,436 bytes) holds the board tag, if the file has one. It is read before anything is written, so a file for another board leaves the other slot as it was: the updater only writes once it has 4 KB. */
+    if (uploadOk && uploadFirst) {
+      uploadFirst = false;
+      char board[16], build[48];
+      imageTag(upload.buf, upload.currentSize, board, sizeof board, build, sizeof build);
+      if (board[0] && strcmp(board, BOARD_ID)) { Update.abort(); uploadOk = false; strlcpy(uploadBoard, board, sizeof uploadBoard); barProgress = -1; }
+    }
     if (uploadOk && !Update.hasError()) Update.write(upload.buf, upload.currentSize);
     if (uploadOk && whole) barProgress = (int8_t)min<uint64_t>(99, (uint64_t)upload.totalSize * 100 / whole);
   } else if (upload.status == UPLOAD_FILE_END) {
@@ -2416,6 +2659,14 @@ static bool prPaired() {
   xSemaphoreGive(prLock);
   return paired;
 }
+
+/* A String that stops growing at cap: the HTTP client's copy then ends with a write error instead of reading on until the memory runs out. getString() had no ceiling for an answer sent without a length (chunked), which is how many APIs answer. */
+struct CappedString : StreamString {
+  size_t cap;
+  explicit CappedString(size_t c) : cap(c) {}
+  size_t write(const uint8_t *data, size_t size) override { return length() + size > cap ? 0 : StreamString::write(data, size); }
+  size_t write(uint8_t c) override { return length() + 1 > cap ? 0 : StreamString::write(c); }
+};
 
 struct Fetch {
   WiFiClientSecure tls;
@@ -2472,11 +2723,27 @@ struct Fetch {
         code = http.GET();
       }
       if (code != 301 && code != 302 && code != 303 && code != 307 && code != 308) return code;
-      const String next = http.header("Location");
-      if (!next.length()) return code;
+      String next = http.header("Location");
+      if (next.startsWith("//")) next = String(secure ? "https:" : "http:") + next;   // another server, same scheme
+      else if (next.startsWith("/")) next = String(secure ? "https://" : "http://") + host + next;   // a path on the same server
+      /* Never from a secure connection to a plain one: what came back over it could not be trusted. It shows as the redirect it was. */
+      if (!next.length() || (secure && !next.startsWith("https://"))) return code;
       url = next;
     }
     return -1;
+  }
+  /* The answer, at most cap bytes of it. 0 with all of it in out; HTTPC_ERROR_STREAM_WRITE when it is bigger than that; another negative code when the connection failed on the way. */
+  int body(String &out, size_t cap) {
+    const int size = http.getSize();
+    if (size > 0 && (size_t)size > cap) return HTTPC_ERROR_STREAM_WRITE;
+    CappedString got(cap);
+    if (size > 0) got.reserve(size + 1);
+    const int result = http.writeToStream(&got);
+    /* The client gives the same error for a reader that would take no more and for an answer cut short, so it is "too big" only if the ceiling was what stopped it. */
+    if (result == HTTPC_ERROR_STREAM_WRITE && got.length() + HTTP_TCP_BUFFER_SIZE < cap) return HTTPC_ERROR_CONNECTION_LOST;
+    if (result < 0) return result;
+    out = std::move(static_cast<String &>(got));
+    return 0;
   }
   /* What went wrong, in enough detail to act on: which server, which step, and what the secure connection itself reported. */
   String error(int code) {
@@ -2520,8 +2787,11 @@ static bool updCheck() {
   filter["html_url"] = true;
   filter["assets"][0]["name"] = true;
   filter["assets"][0]["browser_download_url"] = true;
+  String answer;
+  const int got = f.body(answer, 60000);   // about 14 KB today; a String holds at most 64 KB
+  if (got < 0) { updMessage = got == HTTPC_ERROR_STREAM_WRITE ? String("GitHub's answer was too big to read") : f.error(got); updPhase = UPD_FAILED; return false; }
   JsonDocument doc;
-  if (deserializeJson(doc, f.http.getString(), DeserializationOption::Filter(filter))) { updMessage = "GitHub's answer could not be read"; updPhase = UPD_FAILED; return false; }
+  if (deserializeJson(doc, answer, DeserializationOption::Filter(filter))) { updMessage = "GitHub's answer could not be read"; updPhase = UPD_FAILED; return false; }
   strlcpy(updLatest, doc["tag_name"] | "", sizeof updLatest);
   updPageUrl = doc["html_url"] | "";
   updAssetName = updAssetUrl = updSumsUrl = "";
@@ -2557,7 +2827,8 @@ static bool updInstall() {
     Fetch f;
     const int code = f.begin(updSumsUrl);
     if (code != 200) return updFail("Checksum list: " + f.error(code));
-    const String sums = f.http.getString();
+    String sums;
+    if (f.body(sums, 4096) < 0) return updFail("The checksum list could not be read");
     const int at = sums.indexOf(updAssetName);
     if (at < 0) return updFail("The checksum list does not mention " + updAssetName);
     const int lineStart = sums.lastIndexOf('\n', at) + 1;
@@ -2761,6 +3032,47 @@ static const char *faLoad(const String &text) {
   return nullptr;
 }
 
+/* Whether a file would load, without loading it: faLoad's checks on nothing but locals. A file went into the store on its id and the name of its kind alone, replaced the one that worked, and only then failed to load (0.7.13). */
+static const char *faCheck(const String &text) {
+  JsonDocument doc;
+  if (deserializeJson(doc, text)) return "The add-on file is not valid JSON";
+  if (const char *bad = addonIdError(doc["id"].as<const char *>())) return bad;
+  uint32_t colour;
+  if (!doc["frames"].isNull()) {
+    JsonArrayConst list = doc["frames"]["list"].as<JsonArrayConst>();
+    if (list.size() < 1 || list.size() > FA_MAX_FRAMES) return "frames.list holds 1-30 frames";
+    uint8_t scratch[LED_COUNT][3];
+    for (JsonVariantConst one : list)
+      if (!hexPixels(one.as<const char *>(), scratch)) return "Each frame is 150 hex digits (25 colours)";
+  } else if (!doc["filament"].isNull()) {
+    if (findName(FX_NAMES, FX_COUNT, doc["filament"]["effect"] | "solid") < 0) return "filament.effect is not one of the effects";
+  } else if (!doc["countdown"].isNull()) {
+    JsonVariantConst cd = doc["countdown"];
+    time_t from, to;
+    if (!parseLocalTime(cd["to"] | "", to)) return "countdown.to is a local time, YYYY-MM-DDTHH:MM";
+    if (!parseLocalTime(cd["from"] | "", from)) return "countdown.from is a local time, YYYY-MM-DDTHH:MM";
+    if (to <= from) return "countdown.to must be after countdown.from";
+    if (!cd["colour"].isNull() && !parseColour(cd["colour"].as<const char *>(), colour)) return "countdown.colour must be #RRGGBB";
+    if (findName(FX_NAMES, FX_COUNT, cd["done"] | "rainbow") < 0) return "countdown.done is not one of the effects";
+  } else if (!doc["source"].isNull()) {
+    JsonVariantConst src = doc["source"];
+    const String url = src["url"] | "", path = src["path"] | "", base = src["base"] | "";
+    if (!url.startsWith("http://") && !url.startsWith("https://")) return "source.url must be an http:// or https:// address";
+    if (base.length() && !path.length()) return "source.base needs a source.path to compare with it";
+    if ((src["max"] | 100.0f) == (src["min"] | 0.0f)) return "source.min and source.max must differ";
+    if (!src["colour"].isNull() && !parseColour(src["colour"].as<const char *>(), colour)) return "source.colour must be #RRGGBB";
+  } else {
+    JsonDocument show;
+    show["id"] = doc["id"];
+    show["name"] = doc["name"] | doc["id"].as<const char *>();
+    show["ttl"] = 120;
+    for (const char *key : {"look", "meters", "frame"}) if (!doc[key].isNull()) show[key] = doc[key];
+    if (show.size() <= 3) return "Give one of look, meters, frame, frames, source, filament or countdown";
+    return addonApply(show.as<JsonVariantConst>(), nullptr, true);
+  }
+  return nullptr;
+}
+
 /* Paths like "data.0.price": numbers index arrays, anything else names a key. */
 static void pathFilter(JsonDocument &filter, const String &path) {
   JsonVariant cursor = filter.as<JsonVariant>();
@@ -2811,9 +3123,10 @@ static bool faFetchValue(float &out) {
   f.holdFirst = !faFetchedAt;  // the first reading is the one someone is waiting for on the page
   const int code = f.begin(faSrcUrl);
   if (code != 200) { faError = f.error(code); return false; }
-  const int size = f.http.getSize();
-  if (size > 32768) { faError = "The answer is too big for the bar (over 32 KB)"; return false; }
-  const String body = f.http.getString();
+  String body;
+  const int got = f.body(body, 32768);
+  if (got == HTTPC_ERROR_STREAM_WRITE) { faError = "The answer is too big for the bar (over 32 KB)"; return false; }
+  if (got < 0) { faError = f.error(got); return false; }
   if (!faPath.length()) {
     char *end = nullptr;
     out = strtof(body.c_str(), &end);
@@ -2888,8 +3201,9 @@ static void faTick() {
         faRetryAt = millis() + 60000;
         return;
       }
-      if (f.http.getSize() > (int)FA_MAX_FETCH) { faError = "The add-on file is too big"; faPick = false; return; }
-      text = f.http.getString();
+      const int got = f.body(text, FA_MAX_FETCH);
+      if (got == HTTPC_ERROR_STREAM_WRITE) { faError = "The add-on file is too big"; faPick = false; return; }
+      if (got < 0) { faReload = true; faError = "Fetching it: " + f.error(got) + ". Trying again in a minute."; faRetryAt = millis() + 60000; return; }
       faFails = 0;
     }
     if (!text.length()) { faPick = false; return; }
@@ -3080,6 +3394,13 @@ static void handleUpdateApi() {
 static void handleAddonFile() {
   JsonDocument doc;
   if (!readBody(doc)) return;
+  {
+    /* The server only: an owner's own address can carry a key in its path or query. */
+    String where = doc["url"] | "";
+    const int hostAt = where.indexOf("://");
+    if (hostAt >= 0) { where = where.substring(hostAt + 3); const int end = where.indexOf('/'); if (end >= 0) where = where.substring(0, end); }
+    logLine("Add-on file: %s%s", doc["remove"].as<bool>() ? "removed" : !doc["url"].isNull() ? "from " : "uploaded", doc["remove"].as<bool>() || doc["url"].isNull() ? "" : where.c_str());
+  }
   if (doc["remove"].as<bool>()) {
     prefs.remove("faurl");
     prefs.remove("fajson");
@@ -3091,6 +3412,12 @@ static void handleAddonFile() {
   if (!doc["url"].isNull()) {
     const String url = doc["url"] | "";
     if (!url.startsWith("https://") || url.length() > 300) return sendResult(false, "The add-on's address must start with https://");
+    /* The copy the page hands over is checked like an upload, before the add-on there now is let go. (One fetched by the bar itself is checked when it arrives.) */
+    if (!doc["file"].isNull()) {
+      String text;
+      serializeJson(doc["file"], text);
+      if (const char *bad = faCheck(text)) return sendResult(false, bad);
+    }
     prefs.putString("faurl", url);
     prefs.remove("fajson");
     faInline = "";
@@ -3103,16 +3430,12 @@ static void handleAddonFile() {
     String text;
     serializeJson(doc["file"], text);
     if (text.length() > FA_MAX_UPLOAD) return sendResult(false, "The file is over 4,000 characters; host it and use its address instead");
-    /* Checked before it is kept, so a broken file never replaces a working one. */
-    JsonDocument probe;
-    deserializeJson(probe, text);
-    if (const char *bad = addonIdError(probe["id"].as<const char *>())) return sendResult(false, bad);
-    if (probe["look"].isNull() && probe["meters"].isNull() && probe["frame"].isNull() && probe["frames"].isNull() && probe["source"].isNull() && probe["filament"].isNull() && probe["countdown"].isNull())
-      return sendResult(false, "Give one of look, meters, frame, frames, source, filament or countdown");
+    /* Checked in full before it is kept, so a broken file never replaces a working one. */
+    if (const char *bad = faCheck(text)) return sendResult(false, bad);
     /* Kept as bytes, not a string: a string must fit in one page of the
        settings store, and a 1.8 KB animation did not (measured, 0.5.9). */
+    /* A write the store refuses leaves what it held before, so the add-on that was there carries on; removing it here took that one away too (0.7.13). */
     if (prefs.putBytes("fajson", text.c_str(), text.length()) != text.length()) {
-      prefs.remove("fajson");
       return sendResult(false, "The bar has no room left to keep this file; host it and use its address instead");
     }
     prefs.remove("faurl");
@@ -3347,7 +3670,7 @@ static void haTask(void *) {
     if (!mq.connected()) {
       haConnected = false;
       address = host;
-      if (host.endsWith(".local")) {
+      if (endsWithLocal(host)) {
         IPAddress found = MDNS.queryHost(host.substring(0, host.length() - 6), 2000);
         if (found == IPAddress()) { strlcpy(haError, "Could not find that .local name", sizeof haError); haWait(15000); continue; }
         address = found.toString();
@@ -3414,6 +3737,7 @@ static void haToJson(JsonDocument &doc) {
 static void handleHa() {
   JsonDocument doc;
   if (!readBody(doc)) return;
+  logLine("Home Assistant settings changed");
   xSemaphoreTake(haLock, portMAX_DELAY);
   bool on = haOn; String host = haHost, user = haUser, pass = haPass, prefix = haPrefix; uint16_t port = haPort;
   xSemaphoreGive(haLock);
@@ -3436,17 +3760,18 @@ static void handleHa() {
   if (on && !host.length()) return sendResult(false, "Give the broker's address first");
   if (user.length() > 64 || pass.length() > 64) return sendResult(false, "User name and password are up to 64 characters");
   if (!prefix.length() || prefix.length() > 40 || prefix.indexOf('#') >= 0 || prefix.indexOf('+') >= 0 || prefix.startsWith("/") || prefix.indexOf("//") >= 0) return sendResult(false, "The discovery prefix is usually homeassistant");
-  prefs.putBool("haon", on);
-  prefs.putString("hahost", host);
-  prefs.putUShort("haport", port);
-  prefs.putString("hauser", user);
-  prefs.putString("hapass", pass);
-  prefs.putString("haprefix", prefix);
+  /* Each write checked, as the main settings are: a full store took them without a word, and they were gone at the next restart. putString answers the length it wrote, which is 0 for an empty one whether it worked or not. */
+  bool saved = prefs.putBool("haon", on) && prefs.putUShort("haport", port);
+  saved = prefs.putString("hahost", host) == host.length() && saved;
+  saved = prefs.putString("hauser", user) == user.length() && saved;
+  saved = prefs.putString("hapass", pass) == pass.length() && saved;
+  saved = prefs.putString("haprefix", prefix) == prefix.length() && saved;
   xSemaphoreTake(haLock, portMAX_DELAY);
   haOn = on; haHost = host; haUser = user; haPass = pass; haPrefix = prefix; haPort = port;
   xSemaphoreGive(haLock);
   haRestart = true;
   if (on) haStart();
+  if (!saved) return sendResult(false, "Changed, but the bar could not save it: it will be lost on a restart");
   sendResult(true, on ? "Saved. Connecting to the broker." : "Saved. Home Assistant is off.");
 }
 
@@ -3454,6 +3779,12 @@ static void handleHa() {
 
 void setup() {
   Serial.begin(115200);
+  logBegin();
+  {
+    const esp_partition_t *running = esp_ota_get_running_partition();
+    logLine("---- Start %lu: Panda State %s (%s), %s, slot %s, free memory %u", (unsigned long)logStore.starts, BUILD_ID, BOARD_ID,
+            resetText(esp_reset_reason()), running ? running->label : "?", (unsigned)ESP.getFreeHeap());
+  }
   prefs.begin("panda", false);
   loadConfig();
   outBegin();
@@ -3466,6 +3797,7 @@ void setup() {
     /* A build on trial that has just fallen over has failed it. Waiting out the two minutes again would be a loop wherever the fault comes sooner than that, with only the bootloader's rollback to break it, and whether stock's bootloader has one is not known. */
     const esp_reset_reason_t why = esp_reset_reason();
     if (why == ESP_RST_PANIC || why == ESP_RST_INT_WDT || why == ESP_RST_TASK_WDT || why == ESP_RST_WDT) {
+      logLine("Crashed while on trial");
 #if defined(BOARD_P2)
       /* Except once, where the microphone's start on this build was still unconfirmed: that is what its guard, further down, is for. It leaves the microphone off this time, and the build goes on with its trial. A second fall is the build's own. The excuse is written down before it is used, and only used if the note took, so it cannot be had twice. */
       const bool blameMic = prefs.getString("audiotry", "") == BUILD_ID && prefs.getString("micblame", "") != BUILD_ID;
@@ -3478,6 +3810,8 @@ void setup() {
   }
   startWifi();
   if (onTrial && !wifiSsid.length()) trialAllow = TRIAL_SETUP_MS;
+  if (onTrial) logLine("On trial: %s", wifiSsid.length() ? "has 2 minutes to join Wi-Fi" : "no Wi-Fi details, setup hotspot up for 10 minutes");
+  if (!wifiSsid.length()) logLine("Wi-Fi: no details saved here or by stock");
   applyTimeZone();
 
   prLock = xSemaphoreCreateMutex();
@@ -3536,6 +3870,7 @@ void setup() {
     server.sendHeader("Cache-Control", "no-store");
     server.send(200, "text/plain", hex);
   });
+  server.on("/api/log", HTTP_GET, handleLog);
   server.on("/api/addonfile", HTTP_POST, handleAddonFile);
   server.on("/api/ap", HTTP_POST, handleAp);
   server.on("/api/wifi/scan", HTTP_GET, handleWifiScan);
@@ -3585,17 +3920,101 @@ static void handleHostName() {
   if (!readBody(doc)) return;
   String name = doc["name"] | "";
   name.trim();
-  if (name.endsWith(".local")) name.remove(name.length() - 6);
+  if (endsWithLocal(name)) name.remove(name.length() - 6);
   if (name.length() && !hostNameValid(name.c_str()))
     return sendResult(false, "A name is 1-32 letters, digits and hyphens, not starting or ending with a hyphen");
-  if (name.length()) prefs.putString("host", name);
-  else prefs.remove("host");
+  bool saved;
+  if (name.length()) saved = prefs.putString("host", name) == name.length();
+  else { prefs.remove("host"); saved = !prefs.isKey("host"); }
   strlcpy(hostName, name.length() ? name.c_str() : STOCK_HOST, sizeof hostName);
   mdns_hostname_set(hostName);
   mdns_instance_name_set(hostName);
   keepOtherNames(true);
   const String now = String("Now at http://") + hostName + ".local";
+  if (!saved) return sendResult(false, (now + ", but the bar could not save the name: it goes back at a restart").c_str());
   sendResult(true, now.c_str());
+}
+
+/* Changes in what the other tasks report, written to the log once a second from here, so that only this task writes it. The same fields the page shows; a line only when one changes. */
+static void logWatch() {
+  static bool errorTimedOut = false;
+  const bool timedOut = errorMinutes && errorSince && millis() - errorSince > errorMinutes * 60000UL;
+  if (timedOut != errorTimedOut) { if (timedOut) logLine("Error shown for %u min: back to the idle look until it clears", (unsigned)errorMinutes); errorTimedOut = timedOut; }
+  static int wifiWas = -1;
+  const int wifi = WiFi.status() == WL_CONNECTED;
+  if (wifi != wifiWas) {
+    if (wifi) logLine("Wi-Fi: joined, %s, %d dBm", WiFi.localIP().toString().c_str(), (int)WiFi.RSSI());
+    else if (wifiWas == 1) logLine("Wi-Fi: lost");
+    wifiWas = wifi;
+  }
+  static int apWas = 0;
+  if ((int)apUp != apWas) { logLine("Setup hotspot: %s", apUp ? "on" : "off"); apWas = apUp; }
+
+  static char prErrorWas[sizeof prError] = "";
+  static int prLinkedWas = 0;
+  if ((int)prConnected != prLinkedWas) { logLine("Printer: %s", prConnected ? "linked" : "not linked"); prLinkedWas = prConnected; }
+  char now[sizeof prError];
+  strlcpy(now, prError, sizeof now);
+  if (strcmp(now, prErrorWas)) { if (now[0]) logLine("Printer: %s", now); strlcpy(prErrorWas, now, sizeof prErrorWas); }
+  static char gcodeWas[sizeof prGcode] = "";
+  char gcode[sizeof prGcode];
+  strlcpy(gcode, prGcode, sizeof gcode);
+  if (gcode[0] && strcmp(gcode, gcodeWas)) { logLine("Printer says %s", gcode); strlcpy(gcodeWas, gcode, sizeof gcodeWas); }
+
+  static int haWas = 0;
+  if ((int)haConnected != haWas) { logLine("Home Assistant: %s", haConnected ? "connected" : "not connected"); haWas = haConnected; }
+  static char haErrorWas[sizeof haError] = "";
+  char haNow[sizeof haError];
+  strlcpy(haNow, haError, sizeof haNow);
+  if (strcmp(haNow, haErrorWas)) { if (haNow[0]) logLine("Home Assistant: %s", haNow); strlcpy(haErrorWas, haNow, sizeof haErrorWas); }
+
+  static String faErrorWas;
+  const String faNow = faError;
+  if (faNow != faErrorWas) { if (faNow.length()) logLine("Add-on: %s", faNow.c_str()); faErrorWas = faNow; }
+
+  static int updWas = -1;
+  if (updPhase != updWas) {
+    updWas = updPhase;
+    if (updPhase == UPD_FAILED) logLine("Update: failed: %s", updMessage.c_str());
+    else if (updPhase == UPD_AVAILABLE) logLine("Update: %s is available", updLatest);
+    else if (updPhase == UPD_DOWNLOADING) logLine("Update: downloading %s", updLatest);
+    else if (updPhase == UPD_DONE) logLine("Update: installed, restarting");
+  }
+
+  /* Memory running low is behind most of the failures the secure connections have shown. */
+  static uint32_t lowestLogged = UINT32_MAX;
+  const uint32_t lowest = ESP.getMinFreeHeap();
+  if (lowest + 4096 < lowestLogged) { logLine("Memory: lowest free so far %u bytes", (unsigned)lowest); lowestLogged = lowest; }
+}
+
+/* A report to attach to a GitHub issue: what the bar is and what it is doing, its settings, and the log. Nothing secret, as above. */
+static void handleLog() {
+  String out;
+  out.reserve(LOG_SIZE + 3072);
+  out += "Panda State report\n";
+  out += String("Firmware: ") + BUILD_ID + " for the " BOARD_NAME " (" BOARD_ID ")\n";
+  const esp_partition_t *running = esp_ota_get_running_partition();
+  out += String("Slot: ") + (running ? running->label : "?") + (onTrial ? ", on trial" : "") + "\n";
+  const uint32_t up = millis() / 1000;
+  out += String("Up: ") + (up / 86400) + " d " + (up / 3600 % 24) + " h " + (up / 60 % 60) + " min; last start: " + resetText(esp_reset_reason()) + "; starts in this log: " + logStore.starts + "\n";
+  out += String("Memory: free ") + ESP.getFreeHeap() + ", lowest " + ESP.getMinFreeHeap() + ", largest block " + ESP.getMaxAllocHeap() + "\n";
+  out += String("Wi-Fi: ") + (WiFi.status() == WL_CONNECTED ? String("joined, ") + WiFi.RSSI() + " dBm" : String("not joined")) + (apUp ? "; setup hotspot on" : "") + "\n";
+  out += String("Printer: ") + (prKind == PR_KLIPPER ? "Klipper" : "Bambu Lab") + (prConnected ? ", linked" : ", not linked") + (prGcode[0] ? String(", says ") + prGcode : String("")) + (prError[0] ? String(", ") + prError : String("")) + "\n";
+  out += String("Home Assistant: ") + (haOn ? (haConnected ? "connected" : "not connected") : "off") + (haError[0] ? String(", ") + haError : String("")) + "\n";
+  out += String("Add-on file: ") + FA_NAMES[faKind] + (faId[0] ? String(" ") + faId : String("")) + (faError.length() ? String(", ") + faError : String("")) + "\n";
+  out += String("Update check: ") + UPD_NAMES[updPhase] + (updMessage.length() ? String(", ") + updMessage : String("")) + "\n";
+  {
+    JsonDocument doc;
+    configToJson(doc);
+    out += "Settings: ";
+    serializeJson(doc, out);
+    out += "\n";
+  }
+  out += "\n---- What happened, oldest first (kept across restarts, not across a power cut)\n";
+  logAppendTo(out);
+  server.sendHeader("Content-Disposition", "attachment; filename=\"panda-state-report.txt\"");
+  server.sendHeader("Cache-Control", "no-store");
+  server.send(200, "text/plain; charset=utf-8", out);
 }
 
 void loop() {
@@ -3610,6 +4029,8 @@ void loop() {
   static uint32_t lastWatchAt = 0;
   if (millis() - lastWatchAt >= 1000) {
     lastWatchAt = millis();
+    trackError();
+    logWatch();
     watchTrial();
     keepOtherNames();
     trackPrinter();

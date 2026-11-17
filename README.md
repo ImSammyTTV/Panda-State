@@ -75,7 +75,7 @@ start-up. The updater on the bar fetches the right one for itself.
 | **Panda Status P2** | `panda-p2-custom-<v>.bin` | 25 on GPIO 5, microphone, button | ✅ Made and tested on it |
 | **Panda Status** (original) | `panda-status-custom-<v>.bin` | WS2812 strip on GPIO 5, length set on the page | 🧪 Not yet run on one |
 | **Panda Lux RGB** (PX and PX2) | `panda-lux-custom-<v>.bin` | WS2812 strip on GPIO 5, length set on the page | 🧪 Not yet run on one |
-| **Panda RGB Controller** | `panda-rgb-custom-<v>.bin` | Two 12 V RGB channels on PWM (GPIO 10/1/4 and 6/0/5) | 🧪 Not yet run on one |
+| **Panda RGB Controller** | `panda-rgb-custom-<v>.bin` | Two 12 V RGB channels on PWM (GPIO 10/1/4 and 6/0/5), colour order RGB | 🧪 Not yet run on one |
 
 The pins for the three untested boards were read out of BIQU's own firmware
 for each (the LED channel set-up in the original Panda Status V1.0.3, the Lux
@@ -240,7 +240,8 @@ into it within a few seconds, joins the same Wi-Fi and keeps its pairing.
 **Updating.** From 0.6.2 the bar updates itself: **Firmware → Check for
 updates → Install**. It refuses anything that does not match the release's
 checksums, and restarts into it on trial. *Install file* still takes a `.bin`
-you downloaded yourself. (0.6.0 and 0.6.1 could not download: install 0.6.2 or
+you downloaded yourself; from 0.7.14 it turns away a Panda State file made for
+another board before writing anything. (0.6.0 and 0.6.1 could not download: install 0.6.2 or
 later by hand once.)
 
 **Keeping stock.** Any update goes into the *other* slot, which replaces what is
@@ -267,6 +268,16 @@ way: the copy can be put back any time.
   starts `PandaP2-Setup` (`PandaState-Setup` on the other boards), password `panda` + the last six hex digits of its MAC
   (the page shows it). Join it and open `http://192.168.4.1/`. It cannot be
   switched off for good.
+- **Errors that do not go on for ever.** In the Printer section, *Show a
+  printer error for* sets how many minutes an error is shown before the bar
+  goes back to its idle look (0.7.14 and later; 0, the default, shows it until
+  the printer clears it). A failed print stays "failed" on the printer until
+  the next one starts.
+- **A report for bug reports.** *Save a report* in the Firmware section
+  downloads what the bar is doing, its settings and a log of recent events
+  (0.7.14 and later). The log survives a restart or a crash, not a power cut.
+  It holds no Wi-Fi name or password, access code, serial number or Home
+  Assistant login. Attach it to a [new issue](https://github.com/ImSammyTTV/Panda-State/issues/new).
 - **Updates are checked.** Downloads must match the release's SHA256 checksum,
   and HTTPS is checked against built-in root certificates, never skipped.
 - **Stock's settings are never written**, so going back to stock finds

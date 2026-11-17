@@ -152,6 +152,7 @@ button.go.warn{background:#ef4444;color:#fff}
   <div class="line" id="bbrow"><input class="grow" id="prip" type="text" placeholder="Printer address, e.g. 192.168.1.50" autocomplete="off"><input class="grow" id="prsn" type="text" placeholder="Serial number" autocomplete="off"><input class="grow" id="prcode" type="password" placeholder="Access code" autocomplete="off"></div>
   <div class="line"><button class="go" id="pair">Pair</button><button id="unpair">Unpair</button><span class="sub" id="prhelp">On the printer: Settings, then LAN Only or Network, shows the address and the access code.</span></div>
   <div class="line"><label for="cmin">After a print, cooling for</label><input id="cmin" type="text" inputmode="numeric" style="width:64px"><label for="cbed">minutes and until the bed is at</label><input id="cbed" type="text" inputmode="numeric" style="width:64px"><label>&deg;C</label><button id="coolsave">Save</button></div>
+  <div class="line"><label for="emin">Show a printer error for</label><input id="emin" type="text" inputmode="numeric" style="width:64px"><label>minutes, then go back to the idle look (0: until the printer clears it)</label><button id="errsave">Save</button></div>
   <div class="msg" id="prmsg"></div>
 </details>
 
@@ -187,7 +188,7 @@ button.go.warn{background:#ef4444;color:#fff}
   <div class="line"><label class="tog"><input type="checkbox" id="updauto"> Look for a new release once a day (it is never installed without you)</label></div>
   <div class="sub" id="slots" style="margin-top:12px"></div>
   <div class="line"><input class="grow" id="bin" type="file" accept=".bin"><button id="up">Install file</button></div>
-  <div class="line"><button id="other">Switch to the stock firmware</button><button id="backup" title="Saves a copy of the stock firmware to this device. Keep it: an update later writes over where it is kept, and Install file puts it back.">Dump stock firmware</button><button id="reboot">Restart</button><button id="factory">Reset settings</button></div>
+  <div class="line"><button id="other">Switch to the stock firmware</button><button id="backup" title="Saves a copy of the stock firmware to this device. Keep it: an update later writes over where it is kept, and Install file puts it back.">Dump stock firmware</button><button id="report" title="Downloads a report of what the bar is doing and what has gone wrong lately. It holds no Wi-Fi name or password, access code, serial number or Home Assistant login.">Save a report</button><button id="reboot">Restart</button><button id="factory">Reset settings</button></div>
   <div class="msg" id="fwmsg"></div>
 </details>
 
@@ -228,7 +229,7 @@ function build(s){
 
   const p2=(s.board||'p2')==='p2'; $('moderow').hidden=!p2; $('btnhelp').textContent=p2?$('btnhelp').textContent:'Button on the board: hold five seconds for the setup Wi-Fi network.';
   if(s.board==='status'||s.board==='lux'){$('striprow').hidden=false;$('striplen').value=s.config.stripLength;}
-  if(s.board==='rgb'){$('splitrow').hidden=false;$('split').checked=s.config.split;} $('cmin').value=s.config.cool.minutes; $('cbed').value=s.config.cool.target;
+  if(s.board==='rgb'){$('splitrow').hidden=false;$('split').checked=s.config.split;} $('cmin').value=s.config.cool.minutes; $('emin').value=s.config.error?s.config.error.minutes:0; $('cbed').value=s.config.cool.target;
   const sc=s.config.schedule; schedOn=sc.enabled; paintSched(); $('schfrom').value=sc.from; $('schto').value=sc.to; $('schlvl').value=sc.level;
   /* The zone list: the saved one first if it is not a listed zone, then the browser's own, then the table. */
   const add=(label,tz,zone,pick)=>{const o=document.createElement('option');o.textContent=label;o.value=tz;o.dataset.zone=zone;$('zone').appendChild(o);if(pick)o.selected=true;};
@@ -497,12 +498,14 @@ $('split').onchange=()=>{busy=Date.now();post('/api/config',{split:$('split').ch
 $('pair').onclick=async()=>{const k=$('prtype').value==='klipper';const r=await post('/api/printer',k?{type:'klipper',host:$('klhost').value,port:+($('klport').value||7125),key:$('klkey').value}:{ip:$('prip').value,serial:$('prsn').value,code:$('prcode').value});if(r.ok)$('klkey').value='';$('prmsg').textContent=r.message||(r.ok?'Saved':'Not saved');if(r.ok)$('prcode').value='';};
 $('unpair').onclick=()=>ask({title:'Unpair from the printer?',sub:'The bar stops following the printer until you pair it again here.',ok:'Unpair',warn:true,
   act:async()=>{const r=await post('/api/printer',{forget:true});if(!r.ok)throw new Error(r.message||'It did not unpair');$('prmsg').textContent=r.message||'';$('prip').value='';$('prsn').value='';$('klhost').value='';}});
+$('errsave').onclick=async()=>{const r=await post('/api/config',{error:{minutes:+$('emin').value}});$('prmsg').textContent=r.ok?'Saved':(r.message||'Not saved');};
 $('coolsave').onclick=async()=>{const r=await post('/api/config',{cool:{minutes:+$('cmin').value,target:+$('cbed').value}});$('prmsg').textContent=r.ok?'Saved':(r.message||'Not saved');};
 $('order').onchange=()=>post('/api/config',{order:$('order').value});
 $('rev').onchange=()=>post('/api/config',{reversed:$('rev').checked});
 $('bri').oninput=()=>{$('briv').textContent=$('bri').value+'%';};
 $('bri').onchange=()=>{busy=Date.now();post('/api/config',{brightness:+$('bri').value});};
 $('wifi').onclick=async()=>{const r=await post('/api/wifi',{ssid:$('ssid').value,password:$('pass').value});$('wifimsg').textContent=r.message||(r.ok?'Saved':'Not saved');};
+$('report').onclick=()=>{location.href='/api/log';$('fwmsg').innerHTML='Saved as panda-state-report.txt. To report a problem, attach it to a <a href="https://github.com/ImSammyTTV/Panda-State/issues/new" target="_blank" rel="noopener">new issue on GitHub</a>.';};
 $('reboot').onclick=async()=>{const r=await post('/api/reboot');$('fwmsg').textContent=r.message||'';};
 $('other').onclick=()=>{const stock=last&&!last.otherSlot.ours;
   const act=async()=>{const r=await post('/api/slot');if(!r.ok)throw new Error(r.message||'The bar did not switch');$('fwmsg').textContent=r.message||'';};
@@ -551,11 +554,11 @@ async function tick(){
   const p=s.printer;
   const pk=p.type==='klipper'?'Klipper at ':'';
   $('prstate').textContent=!p.paired?'Not paired.'
-    :p.connected?'Linked to '+pk+p.ip+(p.gcode?' · printer says '+p.gcode+(p.percent!==undefined?' '+p.percent+'%':'')+(p.bed!==undefined?' · bed '+Math.round(p.bed)+'°':'')+(p.filament?' · '+(p.filament.loaded?'':'last used ')+(p.filament.type||'filament')+' '+p.filament.colour:''):' · waiting for its first message')
+    :p.connected?'Linked to '+pk+p.ip+(p.gcode?' · printer says '+p.gcode+(p.percent!==undefined?' '+p.percent+'%':'')+(p.bed!==undefined?' · bed '+Math.round(p.bed)+'°':'')+(p.filament?' · '+(p.filament.loaded?'':'last used ')+(p.filament.type||'filament')+' '+p.filament.colour:''):' · '+(p.error||'waiting for its first message'))
     :'Paired with '+p.ip+', not linked'+(p.error?': '+p.error:'')+'.';
   if(Date.now()-busy>3000){$('bri').value=s.config.brightness;} $('briv').textContent=$('bri').value+'%';
   const o=s.otherSlot;
-  $('slots').textContent='Running from '+s.slot+' ('+s.build+')'+(s.onTrial?' · on trial until it has been on Wi-Fi for 20 s':'')+'. Other slot ('+o.label+'): '+(o.project?o.project+' '+o.version+', built '+o.built:'empty')+'.';
+  $('slots').textContent='Running from '+s.slot+' ('+s.build+')'+(s.onTrial?' · on trial until it has been on Wi-Fi for 20 s':'')+'. Other slot ('+o.label+'): '+(o.panda?'Panda State '+o.panda+(o.board!==s.board?' for another board ('+o.board+')':''):o.project?o.project+' '+o.version+', built '+o.built:'empty')+'.';
   $('other').disabled=!o.project; $('backup').disabled=!o.project;
   // A build on trial takes no new firmware: the other slot is its way back. Said on the buttons, rather than after a whole file has been sent.
   const waitTrial=s.onTrial?'This version is still on trial. It takes new firmware once it has been on Wi-Fi for 20 seconds.':'';
