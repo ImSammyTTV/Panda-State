@@ -28,6 +28,8 @@ background:linear-gradient(160deg,color-mix(in srgb,var(--c) var(--tint),var(--c
 h2{font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--t3);margin:0 0 12px;font-weight:600}
 .row{display:grid;grid-template-columns:88px 44px 44px minmax(0,1fr) minmax(0,1fr) auto;gap:10px;align-items:center;padding:8px 0;border-top:1px solid var(--line)}
 .row:first-of-type{border-top:0}.row span{text-transform:capitalize}
+.acts{display:flex;gap:6px}.rowmore{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:0 0 10px 98px;font-size:13px;color:var(--sub)}.rowmore[hidden]{display:none}
+@media(max-width:560px){.rowmore{padding-left:0}}
 input[type=color]{width:44px;height:32px;padding:0;border:0;border-radius:10px;background:none}
 select,input[type=text],input[type=password],input[type=file]{width:100%;height:34px;border-radius:12px;border:1px solid var(--line);background:rgba(var(--ink),.06);color:var(--text);padding:0 10px;font:inherit;font-size:13.5px}
 /* The open list of a select is drawn by the browser, not by the rule above: without these it came up as white text on a white list. */
@@ -152,7 +154,6 @@ button.go.warn{background:#ef4444;color:#fff}
   <div class="line" id="bbrow"><input class="grow" id="prip" type="text" placeholder="Printer address, e.g. 192.168.1.50" autocomplete="off"><input class="grow" id="prsn" type="text" placeholder="Serial number" autocomplete="off"><input class="grow" id="prcode" type="password" placeholder="Access code" autocomplete="off"></div>
   <div class="line"><button class="go" id="pair">Pair</button><button id="unpair">Unpair</button><span class="sub" id="prhelp">On the printer: Settings, then LAN Only or Network, shows the address and the access code.</span></div>
   <div class="line"><label for="cmin">After a print, cooling for</label><input id="cmin" type="text" inputmode="numeric" style="width:64px"><label for="cbed">minutes and until the bed is at</label><input id="cbed" type="text" inputmode="numeric" style="width:64px"><label>&deg;C</label><button id="coolsave">Save</button></div>
-  <div class="line"><label for="emin">Show a printer error for</label><input id="emin" type="text" inputmode="numeric" style="width:64px"><label>minutes, then go back to the idle look (0: until the printer clears it)</label><button id="errsave">Save</button></div>
   <div class="msg" id="prmsg"></div>
 </details>
 
@@ -210,16 +211,27 @@ function build(s){
   $('rows').innerHTML='';
   for(const name of STATES){
     const look=s.config.states[name]; const row=document.createElement('div'); row.className='row';
-    row.innerHTML='<span>'+name+'</span><input type="color" title="Colour"><input type="color" title="Second colour, for the two-colour effects"><select></select><input class="spd" type="range" min="1" max="100" title="Speed"><button>Try</button>';
-    const [,colour,colour2,effect,speed,tryIt]=row.children;
+    row.innerHTML='<span>'+name+'</span><input type="color" title="Colour"><input type="color" title="Second colour, for the two-colour effects"><select></select><input class="spd" type="range" min="1" max="100" title="Speed"><span class="acts"><button>Try</button><button title="More for this state: its own brightness, and how long it is shown">More</button></span>';
+    const [,colour,colour2,effect,speed,acts]=row.children; const [tryIt,moreBtn]=acts.children;
+    /* The rest of a state's options, folded away under its row. */
+    const more=document.createElement('div'); more.className='rowmore'; more.hidden=true;
+    const goesTo=name==='idle'||name==='offline'?'go dark':'go back to the idle look';
+    more.innerHTML='<label>Brightness</label><select></select><label>Show it for</label><input type="text" inputmode="numeric" style="width:56px"><label>minutes, then '+goesTo+' (0: as long as it lasts)</label>';
+    const [,level,,limit]=more.children;
+    const lv=document.createElement('option'); lv.value='0'; lv.textContent="the bar's"; level.appendChild(lv);
+    for(let p=100;p>=5;p-=p>20?10:5){const o=document.createElement('option');o.value=String(p);o.textContent=p+'%';level.appendChild(o);}
+    if(look.level&&![...level.options].some(o=>o.value===String(look.level))){const o=document.createElement('option');o.value=String(look.level);o.textContent=look.level+'%';level.appendChild(o);}
+    level.value=String(look.level||0); limit.value=look.limit||0;
+    moreBtn.onclick=()=>{more.hidden=!more.hidden;};
     colour.value=look.colour.toLowerCase(); colour2.value=look.colour2.toLowerCase(); speed.value=look.speed;
     for(const fx of s.effects){const o=document.createElement('option');o.value=o.textContent=fx;effect.appendChild(o);} effect.value=look.effect;
     /* The second colour is only sent when it is the one changed, so an untouched one keeps following the first. */
     /* Only the control that changed is sent: a page left open would otherwise write its old colour and effect back over ones set since from somewhere else. */
     const save=async(one)=>{busy=Date.now();const r=await post('/api/config',{states:{[name]:one}});$('cfgmsg').textContent=r.ok?'Saved':(r.message||'Not saved');};
     colour.onchange=()=>save({colour:colour.value}); effect.onchange=()=>save({effect:effect.value}); speed.onchange=()=>save({speed:+speed.value}); colour2.onchange=()=>save({colour2:colour2.value});
+    level.onchange=()=>save({level:+level.value}); limit.onchange=()=>save({limit:+limit.value});
     tryIt.onclick=()=>post('/api/preview',{state:name,progress:60,seconds:8});
-    $('rows').appendChild(row);
+    $('rows').appendChild(row); $('rows').appendChild(more);
   }
   for(const o of ['GRB','RGB','BRG','BGR','RBG','GBR']){const e=document.createElement('option');e.value=e.textContent=o;$('order').appendChild(e);}
   $('order').value=s.config.order; $('rev').checked=s.config.reversed; $('bri').value=s.config.brightness;
@@ -229,7 +241,7 @@ function build(s){
 
   const p2=(s.board||'p2')==='p2'; $('moderow').hidden=!p2; $('btnhelp').textContent=p2?$('btnhelp').textContent:'Button on the board: hold five seconds for the setup Wi-Fi network.';
   if(s.board==='status'||s.board==='lux'){$('striprow').hidden=false;$('striplen').value=s.config.stripLength;}
-  if(s.board==='rgb'){$('splitrow').hidden=false;$('split').checked=s.config.split;} $('cmin').value=s.config.cool.minutes; $('emin').value=s.config.error?s.config.error.minutes:0; $('cbed').value=s.config.cool.target;
+  if(s.board==='rgb'){$('splitrow').hidden=false;$('split').checked=s.config.split;} $('cmin').value=s.config.cool.minutes; $('cbed').value=s.config.cool.target;
   const sc=s.config.schedule; schedOn=sc.enabled; paintSched(); $('schfrom').value=sc.from; $('schto').value=sc.to; $('schlvl').value=sc.level;
   /* The zone list: the saved one first if it is not a listed zone, then the browser's own, then the table. */
   const add=(label,tz,zone,pick)=>{const o=document.createElement('option');o.textContent=label;o.value=tz;o.dataset.zone=zone;$('zone').appendChild(o);if(pick)o.selected=true;};
@@ -498,7 +510,6 @@ $('split').onchange=()=>{busy=Date.now();post('/api/config',{split:$('split').ch
 $('pair').onclick=async()=>{const k=$('prtype').value==='klipper';const r=await post('/api/printer',k?{type:'klipper',host:$('klhost').value,port:+($('klport').value||7125),key:$('klkey').value}:{ip:$('prip').value,serial:$('prsn').value,code:$('prcode').value});if(r.ok)$('klkey').value='';$('prmsg').textContent=r.message||(r.ok?'Saved':'Not saved');if(r.ok)$('prcode').value='';};
 $('unpair').onclick=()=>ask({title:'Unpair from the printer?',sub:'The bar stops following the printer until you pair it again here.',ok:'Unpair',warn:true,
   act:async()=>{const r=await post('/api/printer',{forget:true});if(!r.ok)throw new Error(r.message||'It did not unpair');$('prmsg').textContent=r.message||'';$('prip').value='';$('prsn').value='';$('klhost').value='';}});
-$('errsave').onclick=async()=>{const r=await post('/api/config',{error:{minutes:+$('emin').value}});$('prmsg').textContent=r.ok?'Saved':(r.message||'Not saved');};
 $('coolsave').onclick=async()=>{const r=await post('/api/config',{cool:{minutes:+$('cmin').value,target:+$('cbed').value}});$('prmsg').textContent=r.ok?'Saved':(r.message||'Not saved');};
 $('order').onchange=()=>post('/api/config',{order:$('order').value});
 $('rev').onchange=()=>post('/api/config',{reversed:$('rev').checked});
