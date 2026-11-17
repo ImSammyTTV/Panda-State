@@ -1,0 +1,36 @@
+name: Replace release notes
+
+# Rewrites the notes of a release that is already published. Run by hand:
+# Actions, Replace release notes, Run workflow. Only the text changes: the
+# files, the tag and the date stay as they are.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version whose notes to replace (e.g. 0.7.14)"
+        required: true
+        type: string
+      notes:
+        description: "The new release notes, in Markdown"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  notes:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Replace the notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ inputs.version }}
+          NOTES: ${{ inputs.notes }}
+        run: |
+          set -euo pipefail
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Not a version: $VERSION"; exit 1; }
+          printf '%s\n' "$NOTES" > "$RUNNER_TEMP/notes.md"
+          gh release edit "v$VERSION" --notes-file "$RUNNER_TEMP/notes.md"
