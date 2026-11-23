@@ -22,6 +22,9 @@ main{max-width:860px;margin:0 auto;padding:22px 16px 60px;display:flex;flex-dire
 background:linear-gradient(160deg,color-mix(in srgb,var(--c) var(--tint),var(--cardA)),var(--cardB) 70%)}
 .head{display:flex;align-items:center;gap:12px}.head b{font-size:16px;font-weight:600}
 .chip{padding:4px 11px;border-radius:999px;font-size:12px;font-weight:600;background:color-mix(in srgb,var(--c) 28%,transparent)}
+.chip.newv{margin-left:6px;height:auto;min-height:0;padding:4px 11px;font-size:12px;border:0;cursor:pointer;color:#0b0f14;background:#22c55e;animation:newv 2.4s ease-in-out infinite}.chip.newv:hover{filter:brightness(1.1)}
+@keyframes newv{0%,100%{box-shadow:0 0 0 0 rgba(34,197,94,.5)}50%{box-shadow:0 0 0 6px rgba(34,197,94,0)}}
+@media (prefers-reduced-motion:reduce){.chip.newv{animation:none}}
 .more{margin-left:auto;font-size:13px;color:var(--t3)}
 .big{font-size:54px;font-weight:250;letter-spacing:-.04em;margin:18px 0 2px;text-transform:capitalize}
 .sub{font-size:13px;color:var(--t3)}
@@ -135,7 +138,7 @@ background:color-mix(in srgb,var(--bg) 88%,transparent);backdrop-filter:blur(14p
 </head><body><main>
 
 <section class="card" id="now">
-  <div class="head"><b>Panda State</b><span class="chip" id="fw">…</span><span class="more"><span id="net"></span><span class="sig" id="sig" title="Wi-Fi signal"><i></i><i></i><i></i><i></i></span></span><button class="thm" id="thm"></button></div>
+  <div class="head"><b>Panda State</b><span class="chip" id="fw">…</span><button class="chip newv" id="newv" hidden title="Go to Firmware to install it"></button><span class="more"><span id="net"></span><span class="sig" id="sig" title="Wi-Fi signal"><i></i><i></i><i></i><i></i></span></span><button class="thm" id="thm"></button></div>
   <div class="kick">On the bar now</div>
   <div class="big" id="state">…</div>
   <div class="sub" id="said"></div>
@@ -279,7 +282,7 @@ function build(s){
     /* The second colour is only sent when it is the one changed, so an untouched one keeps following the first. */
     /* Only the control that changed is sent: a page left open would otherwise write its old colour and effect back over ones set since from somewhere else. */
     /* The card's picture and badges, from its own controls, so they follow an edit at once. */
-    const paint=()=>{lookStrip(sw,effect.value,colour.value,colour2.value);top.children[1].textContent=effect.value+' · speed '+speed.value;
+    const paint=()=>{lookStrip(sw,effect.value,colour.value,colour2.value);sw.sim=lookSim({colour:colour.value,colour2:colour2.value,effect:effect.value,speed:+speed.value});top.children[1].textContent=effect.value+' · speed '+speed.value;
       badges.children[0].textContent=+level.value?level.value+'% brightness':"bar's brightness";
       badges.children[1].textContent=+limit.value?(limit.value>=60&&limit.value%60===0?limit.value/60+' h':limit.value+' min')+' → '+(name==='idle'||name==='offline'?'dark':'idle'):'as long as it lasts';
       card.style.opacity=onBox.checked?'':'.55';if(!onBox.checked)badges.children[1].textContent='switched off → shows '+INSTEAD[name];};
@@ -288,11 +291,11 @@ function build(s){
     level.onchange=()=>save({level:+level.value}); limit.onchange=()=>save({limit:+limit.value});
     onBox.checked=look.on!==false; onBox.onchange=()=>save({on:onBox.checked});
     tryIt.onclick=()=>post('/api/preview',{state:name,progress:60,seconds:8});
-    speed.oninput=paint; colour.oninput=paint; colour2.oninput=paint;
+    speed.oninput=paint; colour.oninput=paint; colour2.oninput=paint; effect.oninput=paint; sw.classList.add('live'); sw.repaint=paint;
     card.appendChild(more); $('rows').appendChild(card); paint();
   }
   for(const o of ['GRB','RGB','BRG','BGR','RBG','GBR']){const e=document.createElement('option');e.value=e.textContent=o;$('order').appendChild(e);}
-  $('order').value=s.config.order; $('rev').checked=s.config.reversed;$('glow').checked=s.config.glow!==false; $('bri').value=s.config.brightness;
+  $('order').value=s.config.order; $('rev').checked=s.config.reversed;$('glow').checked=GLOW=s.config.glow!==false; $('bri').value=s.config.brightness;
   $('prtype').value=s.printer.type||'bambu'; showPrType();
   if(s.printer.type==='klipper'){$('klhost').value=s.printer.ip||'';$('klport').value=s.printer.port||7125;}else{$('prip').value=s.printer.ip||''; $('prsn').value=s.printer.serial||'';}
   const h=s.homeAssistant; haOn=h.on; paintHa(); $('hahost').value=h.host; $('haport').value=h.port; $('hauser').value=h.user; $('haprefix').value=h.prefix; $('hatopic').textContent=h.topic;
@@ -400,10 +403,13 @@ function partner(c){const [r,g,b]=c.map(x=>x/255),hi=Math.max(r,g,b),lo=Math.min
   const s=sp/hi,v=hi,f=h-Math.floor(h),p=v*(1-s),q=v*(1-s*f),u=v*(1-s*(1-f));
   return [[v,u,p],[q,v,p],[p,v,u],[p,q,v],[u,p,v],[v,p,q]][Math.floor(h)%6].map(x=>Math.floor(x*255));}
 function hue(h){const x=h*6,f=x-Math.floor(x),q=1-f;return [[1,f,0],[q,1,0],[0,1,f],[0,q,1],[f,0,1],[1,0,q]][Math.floor(x)%6].map(v=>v*255);}
-function lookSim(look){
+/* GLOW: the bar's "faint glow on unlit LEDs" setting, which breathe, flash, chase and fill follow. */
+let GLOW=true;
+function lookSim(look,fillPct){
   const N=25,c1=hex3(look.colour),c2=look.colour2&&look.colour2!=='auto'?hex3(look.colour2):partner(c1),fx=look.effect||'solid',speed=look.speed||50;
   const pal=[c1,c2],mix=(a,b,k)=>[0,1,2].map(i=>a[i]+(b[i]-a[i])*k),along=(x)=>{const f=(((x%1)+1)%1)*2,i=Math.floor(f);return mix(pal[i%2],pal[(i+1)%2],f-i);};
-  const heat=new Array(N).fill(0),glow=new Array(N).fill(0),tint=[...Array(N)].map(()=>[0,0,0]);let drops=[];
+  const heat=new Array(N).fill(0),glow=new Array(N).fill(0),tint=[...Array(N)].map(()=>[0,0,0]),flick=new Array(N).fill(0);let drops=[],flickAll=1;
+  const cyc=(x,p)=>((x%p)+p)%p;
   return (t,dt)=>{
     const rate=0.1+speed/100*1.9,s=0.5+speed/100*7.5;let lamp=null;
     if(fx==='fire'){const ticks=Math.max(1,Math.round(dt*30*Math.max(0.5,s/4)));
@@ -413,12 +419,19 @@ function lookSim(look){
     else if(fx==='sparkle'){lamp=[];for(let i=0;i<N;i++){glow[i]=Math.max(0,glow[i]-dt*6);if(Math.random()<dt*s*0.8)glow[i]=1;lamp.push([mix(c1,[255,255,255],glow[i]),0.55+0.45*glow[i]]);}}
     else if(fx==='rain'){drops=drops.map(d=>d-dt*s*5).filter(d=>d>=-4);if(drops.length<8&&Math.random()<dt*s*0.9)drops.push(N-1);
       const lv=new Array(N).fill(0);for(const d of drops)for(let j=0;j<4;j++){const i=Math.round(d+j);if(i>=0&&i<N)lv[i]=Math.max(lv[i],1-j/4);}lamp=lv.map(l=>[c1,l]);}
+    else if(fx==='candle'){flickAll=Math.min(1,Math.max(0.55,flickAll+(Math.random()-0.5)*dt*s*2.2));flickAll+=(0.85-flickAll)*Math.min(1,dt*1.5);lamp=[];
+      for(let i=0;i<N;i++){if(flick[i]<=0)flick[i]=0.8;flick[i]=Math.min(1,Math.max(0.5,flick[i]+(Math.random()-0.5)*dt*s*1.6));const v=Math.min(1,flickAll*flick[i]);lamp.push([mix(c2,c1,v),v]);}}
     const out=[];
     for(let i=0;i<N;i++){let col=c1,v=1;
       switch(fx){
-        case 'breathe':v=0.10+0.90*(0.5-0.5*Math.cos(2*Math.PI*t*rate*0.5));break;
-        case 'flash':v=((t*rate*2)%1)<0.5?1:0.15;break;
-        case 'chase':{const head=(t*rate*N*0.5)%N,behind=(head-i+N)%N;v=Math.max(0.2,behind<6?1-behind/6:0.2);break;}
+        case 'breathe':v=(GLOW?0.10:0)+(GLOW?0.90:1)*(0.5-0.5*Math.cos(2*Math.PI*t*rate*0.5));break;
+        case 'flash':v=((t*rate*2)%1)<0.5?1:(GLOW?0.15:0);break;
+        case 'chase':{const lo=GLOW?0.2:0,head=(t*rate*N*0.5)%N,behind=(head-i+N)%N;v=Math.max(lo,behind<6?1-behind/6:lo);break;}
+        case 'fill':{const lo=GLOW?0.2:0,lit=(fillPct===undefined?60:fillPct)/100*N-i;v=lit>=1?1:lit>0?Math.max(lit,lo):lo;break;}
+        case 'heartbeat':{const h=cyc(t*s*0.25,1),beat=(x,at)=>{const d=(x-at)/0.045;return Math.exp(-d*d);},b=Math.max(beat(h,0.08),0.7*beat(h,0.28));col=mix(c2,c1,b);v=Math.sqrt(0.04+0.96*b);break;}
+        case 'strobe':{const on=cyc(t*s*0.6,1)<0.12;col=on?c1:c2;v=on?1:0;break;}
+        case 'ripple':{const w=0.5+0.5*Math.sin(Math.abs(i-(N-1)/2)*0.9-cyc(t*s*1.6,2*Math.PI));col=mix(c2,c1,w);v=0.3+0.7*w;break;}
+        case 'stack':{const st=cyc(t*s*0.12,2),edge=st<1?st*N:(2-st)*N,on=Math.min(1,Math.max(0,edge-i));col=mix(c2,c1,on);v=0.35+0.65*on;break;}
         case 'rainbow':col=hue((i/N+t*rate*0.2)%1);break;
         case 'gradient':col=mix(c1,c2,i/(N-1));break;
         case 'waves':col=along(i/N+t*0.05*s+0.12*Math.sin(t*0.6*s+i/3));v=0.55+0.45*Math.sin(i/2.5-t*0.9*s);break;
@@ -451,8 +464,12 @@ function loadSims(idx){for(const a of idx.addons){if(SIMS[a.file]!==undefined)co
 let simLast=0;
 function simTick(now){
   requestAnimationFrame(simTick);
-  if(document.hidden||!$('fold-addons').open||now-simLast<33)return;
+  if(document.hidden||now-simLast<33)return;
   const dt=simLast?Math.min(0.1,(now-simLast)/1000):0.033;simLast=now;
+  /* Each state's card plays its look as the bar would, from a copy of the bar's own effects. */
+  if($('fold-looks').open)document.querySelectorAll('#rows .sw.live').forEach(sw=>{if(!sw.sim)return;const px=sw.sim(now/1000,dt);
+    [...sw.children].forEach((el,i)=>{const c=px[i];el.style.background='rgb('+Math.round(c[0])+','+Math.round(c[1])+','+Math.round(c[2])+')';});});
+  if(!$('fold-addons').open)return;
   document.querySelectorAll('#storelist .sw[data-f]').forEach(sw=>{const sim=SIMS[sw.dataset.f];if(!sim)return;const px=sim(now/1000,dt);if(!px)return;
     [...sw.children].forEach((el,i)=>{const c=px[i];el.style.background='rgb('+Math.round(c[0])+','+Math.round(c[1])+','+Math.round(c[2])+')';});});
 }
@@ -522,6 +539,9 @@ $('storelist').onclick=(e)=>{const b=e.target.closest('button');if(b&&b.dataset.
 };
 function renderUpdate(s){
   const u=s.update,v=(t)=>String(t).replace(/^v/,'');
+  /* Up top too, beside the version: a new release is easy to miss folded away under Firmware. */
+  $('newv').hidden=!(u.phase==='available'||u.phase==='downloading');
+  $('newv').textContent=u.phase==='downloading'?'Installing v'+v(u.latest)+' · '+u.percent+'%':'v'+v(u.latest)+' available · update';
   $('updtitle').textContent=u.phase==='downloading'?'Installing '+v(u.latest)+' · '+u.percent+'%':u.phase==='installed'?u.message
     :u.phase==='available'?'Version '+v(u.latest)+' is available':u.phase==='checking'?'Looking on GitHub…'
     :u.phase==='current'?'Up to date · '+s.version:'Version '+s.version;
@@ -560,6 +580,7 @@ $('apsave').onclick=async()=>{busy=Date.now();const body={always:$('apmode').val
 $('apmode').onchange=$('apsave').onclick;
 $('updcheck').onclick=()=>post('/api/update',{check:true});
 /* Firmware questions are asked in the page's own pop-up, in plain words: what happens, and how to undo it. */
+$('newv').onclick=()=>{const f=$('fold-fw');f.open=true;f.scrollIntoView({behavior:'smooth',block:'start'});};
 $('updinstall').onclick=()=>{const ver=$('updinstall').textContent.replace('Install ',''),stock=last&&last.otherSlot.project&&!last.otherSlot.ours;
   ask({title:'Install '+ver+'?',sub:'The bar downloads it from GitHub, checks it, and restarts into it. This takes about a minute.'
     +(stock?' It goes where the stock firmware is kept, so the stock firmware will no longer be on the bar. To keep a copy, press Cancel and use Dump stock firmware first.':' The version running now stays on the bar, to go back to if needed.'),
@@ -587,7 +608,7 @@ $('unpair').onclick=()=>ask({title:'Unpair from the printer?',sub:'The bar stops
 $('coolsave').onclick=async()=>{const r=await post('/api/config',{cool:{minutes:+$('cmin').value,target:+$('cbed').value}});$('prmsg').textContent=r.ok?'Saved':(r.message||'Not saved');};
 $('order').onchange=()=>post('/api/config',{order:$('order').value});
 $('rev').onchange=()=>post('/api/config',{reversed:$('rev').checked});
-$('glow').onchange=()=>post('/api/config',{glow:$('glow').checked});
+$('glow').onchange=()=>{GLOW=$('glow').checked;document.querySelectorAll('#rows .sw.live').forEach(sw=>{if(sw.repaint)sw.repaint();});post('/api/config',{glow:$('glow').checked});};
 $('bri').oninput=()=>{$('briv').textContent=$('bri').value+'%';};
 $('bri').onchange=()=>{busy=Date.now();post('/api/config',{brightness:+$('bri').value});};
 $('wifi').onclick=async()=>{const r=await post('/api/wifi',{ssid:$('ssid').value,password:$('pass').value});$('wifimsg').textContent=r.message||(r.ok?'Saved':'Not saved');};
