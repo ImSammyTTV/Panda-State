@@ -39,7 +39,8 @@ README's API section).
 
 Effects: solid, breathe, fill, flash, chase, rainbow, gradient, waves, scroll,
 theatre, scanner, meteor, fire, twinkle, sparkle, rain, aurora, and from
-firmware 0.7.15 heartbeat, strobe, candle, ripple and stack.
+firmware 0.7.15 heartbeat, strobe, candle, ripple and stack, and from 0.7.21
+fade, plasma, lava, juggle, bounce, dissolve, fireworks, lightning, highlight and drip.
 
 ### Live meters (`source`)
 
@@ -77,7 +78,8 @@ Two more `needs` work the same way:
 1. Add your `.json` file to this folder.
 2. Add an entry for it to `index.json`: `file`, `name`, `description`,
    `author`, `kind` (`look`, `animation`, `live meter`, `countdown`,
-   `printer` or `maintenance`),
+   `printer` or `maintenance`), `category` (the store's filter: `Printer`,
+   `Weather`, `Prices` or `Reminders`; a new one appears as its own chip),
    `preview` (25 colours as 150 hex digits for the little strip on the store
    card) and, for an add-on that asks for something, its `needs`.
 3. Open a pull request.

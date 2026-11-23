@@ -7,6 +7,7 @@
                        "description":  "The colour of the filament the printer is using, from its AMS or external spool. Between prints, the last one used, breathing slowly. Bambu printers only.",
                        "author":  "Sam",
                        "kind":  "printer",
+                       "category":  "Printer",
                        "preview":  "FEC600FEC600FEC600FEC600FEC600FEC600FEC600FEC600FEC600FEC600FEC600FEC600FEC600FEC600FEC600FEC600FEC600FEC600FEC600FEC600FEC600FEC600FEC600FEC600FEC600"
                    },
                    {
@@ -15,6 +16,7 @@
                        "description":  "How much is left on the loaded spool, in the filament's own colour. Bambu spools with their tag, on Bambu printers.",
                        "author":  "Sam",
                        "kind":  "printer",
+                       "category":  "Printer",
                        "preview":  "E5E7EBE5E7EBE5E7EBE5E7EBE5E7EBE5E7EBE5E7EBE5E7EBE5E7EBE5E7EBE5E7EBE5E7EBE5E7EBE5E7EBE5E7EBE5E7EBE5E7EBE5E7EB111418111418111418111418111418111418111418"
                    },
                    {
@@ -23,6 +25,7 @@
                        "description":  "How damp your AMS is: green is dry, red means change the desiccant. Bambu printers with an AMS.",
                        "author":  "Sam",
                        "kind":  "printer",
+                       "category":  "Printer",
                        "preview":  "22C55E22C55E22C55E22C55E22C55E22C55E22C55E22C55E111418111418111418111418111418111418111418111418111418111418111418111418111418111418111418111418111418"
                    },
                    {
@@ -31,6 +34,7 @@
                        "description":  "The bar drains as the print's time estimate counts down. Shows during prints.",
                        "author":  "Sam",
                        "kind":  "printer",
+                       "category":  "Printer",
                        "preview":  "3B82F63B82F63B82F63B82F63B82F63B82F63B82F63B82F63B82F63B82F63B82F63B82F63B82F63B82F6111418111418111418111418111418111418111418111418111418111418111418"
                    },
                    {
@@ -39,6 +43,7 @@
                        "description":  "The bar fills as the nozzle and bed reach temperature before a print.",
                        "author":  "Sam",
                        "kind":  "printer",
+                       "category":  "Printer",
                        "preview":  "F97316F97316F97316F97316F97316F97316F97316F97316F97316F97316F97316111418111418111418111418111418111418111418111418111418111418111418111418111418111418"
                    },
                    {
@@ -47,6 +52,7 @@
                        "description":  "For ABS and ASA: the bar fills as an enclosed printer's chamber warms up.",
                        "author":  "Sam",
                        "kind":  "printer",
+                       "category":  "Printer",
                        "preview":  "EF4444EF4444EF4444EF4444EF4444EF4444EF4444EF4444EF4444EF4444EF4444EF4444EF4444EF4444EF4444EF4444111418111418111418111418111418111418111418111418111418"
                    },
                    {
@@ -55,6 +61,7 @@
                        "description":  "After 200 print hours the bar breathes amber until you press Done: clean, check, grease.",
                        "author":  "Sam",
                        "kind":  "maintenance",
+                       "category":  "Reminders",
                        "preview":  "F59E0BF59E0BF59E0BF59E0BF59E0BF59E0BF59E0BF59E0BF59E0BF59E0BF59E0BF59E0BF59E0BF59E0BF59E0BF59E0BF59E0BF59E0BF59E0BF59E0BF59E0BF59E0BF59E0BF59E0BF59E0B"
                    },
                    {
@@ -63,6 +70,7 @@
                        "description":  "Counts down to a date and time you choose: the bar starts full and empties as it gets closer, then celebrates for 12 hours when it arrives.",
                        "author":  "Sam",
                        "kind":  "countdown",
+                       "category":  "Reminders",
                        "preview":  "F59E0BF59E0BF59E0BF59E0BF59E0BF59E0BF59E0BF59E0BF59E0BF59E0BF59E0BF59E0BF59E0BF59E0BF59E0BF59E0BF59E0BF59E0BF59E0BF59E0BF59E0BF59E0BF59E0BF59E0BF59E0B",
                        "needs":  "countdown"
                    },
@@ -72,6 +80,7 @@
                        "description":  "How a share is doing today, for any stock code you choose: half way is no change, full is up 5% or more, empty is down 5% or more. Updated every 5 minutes; prices can be delayed.",
                        "author":  "Sam",
                        "kind":  "live meter",
+                       "category":  "Prices",
                        "preview":  "22C55E22C55E22C55E22C55E22C55E22C55E22C55E22C55E22C55E22C55E22C55E22C55E22C55E22C55E22C55E22C55E22C55E111418111418111418111418111418111418111418111418",
                        "needs":  "symbol"
                    },
@@ -81,6 +90,7 @@
                        "description":  "The temperature outside now, as a meter from -5 C (empty) to 40 C (full). Updated every 15 minutes. Weather data by Open-Meteo.com (CC BY 4.0).",
                        "author":  "Sam",
                        "kind":  "live meter",
+                       "category":  "Weather",
                        "preview":  "F97316F97316F97316F97316F97316F97316F97316F97316F97316F97316F97316F97316111418111418111418111418111418111418111418111418111418111418111418111418111418",
                        "needs":  "place"
                    },
@@ -90,6 +100,7 @@
                        "description":  "The chance of rain in the coming hour, 0 to 100%. Glance before the washing goes out. Updated every 15 minutes. Weather data by Open-Meteo.com (CC BY 4.0).",
                        "author":  "Sam",
                        "kind":  "live meter",
+                       "category":  "Weather",
                        "preview":  "3B82F63B82F63B82F63B82F63B82F63B82F63B82F63B82F6111418111418111418111418111418111418111418111418111418111418111418111418111418111418111418111418111418",
                        "needs":  "place"
                    },
@@ -99,6 +110,7 @@
                        "description":  "The UV index now, from 0 to 11+ (full is extreme). Past half way is time for sunscreen. Updated every 15 minutes. Weather data by Open-Meteo.com (CC BY 4.0).",
                        "author":  "Sam",
                        "kind":  "live meter",
+                       "category":  "Weather",
                        "preview":  "A855F7A855F7A855F7A855F7A855F7A855F7A855F7A855F7A855F7A855F7A855F7A855F7A855F7A855F7A855F7111418111418111418111418111418111418111418111418111418111418",
                        "needs":  "place"
                    },
@@ -108,6 +120,7 @@
                        "description":  "The wind speed now, 0 to 60 km/h. Updated every 15 minutes. Weather data by Open-Meteo.com (CC BY 4.0).",
                        "author":  "Sam",
                        "kind":  "live meter",
+                       "category":  "Weather",
                        "preview":  "94A3B894A3B894A3B894A3B894A3B894A3B894A3B894A3B894A3B8111418111418111418111418111418111418111418111418111418111418111418111418111418111418111418111418",
                        "needs":  "place"
                    },
@@ -117,6 +130,7 @@
                        "description":  "How likely thunderstorms are near you now, before leaving a print running overnight. By Open-Meteo.",
                        "author":  "Sam",
                        "kind":  "live meter",
+                       "category":  "Weather",
                        "preview":  "FACC15FACC15FACC15FACC15FACC15FACC15111418111418111418111418111418111418111418111418111418111418111418111418111418111418111418111418111418111418111418",
                        "needs":  "place"
                    },
@@ -126,6 +140,7 @@
                        "description":  "The European air quality index outside: under 20 is good, 50 is poor, full (100) is extremely poor. Worth a look before opening the windows to air out the printer. Updated every 30 minutes. Air quality data by Open-Meteo.com (CC BY 4.0).",
                        "author":  "Sam",
                        "kind":  "live meter",
+                       "category":  "Weather",
                        "preview":  "22C55E22C55E22C55E22C55E22C55E22C55E111418111418111418111418111418111418111418111418111418111418111418111418111418111418111418111418111418111418111418",
                        "needs":  "place"
                    },
@@ -135,47 +150,8 @@
                        "description":  "The change in the price of ether over the last day: half way is no change, full is up 10% or more, empty is down 10% or more. From CoinGecko, every 5 minutes.",
                        "author":  "Sam",
                        "kind":  "live meter",
+                       "category":  "Prices",
                        "preview":  "8B5CF68B5CF68B5CF68B5CF68B5CF68B5CF68B5CF68B5CF68B5CF68B5CF68B5CF6111418111418111418111418111418111418111418111418111418111418111418111418111418111418"
-                   },
-                   {
-                       "file":  "aurora.json",
-                       "name":  "Aurora",
-                       "description":  "Greens and violets drifting slowly along the bar, like the northern lights.",
-                       "author":  "Sam",
-                       "kind":  "look",
-                       "preview":  "22C55E30B7723DAA854A9D985690AA6285BB6C7BC97572D77D6AE28364EA8760F18A5DF58B5CF68A5DF58760F18364EA7D6AE27572D76C7BC96285BB5690AA4A9D983DAA8530B77222C55E"
-                   },
-                   {
-                       "file":  "ocean-breathing.json",
-                       "name":  "Ocean breathing",
-                       "description":  "A calm blue that rises and falls, slow enough to fall asleep to.",
-                       "author":  "Sam",
-                       "kind":  "look",
-                       "preview":  "0EA5E91097DD1289D0147CC51670BA1864AF1959A61B509E1C48971D42911D3E8D1E3B8B1E3A8A1E3B8B1D3E8D1D42911C48971B509E1959A61864AF1670BA147CC51289D01097DD0EA5E9"
-                   },
-                   {
-                       "file":  "campfire.json",
-                       "name":  "Campfire",
-                       "description":  "Flickering orange and red embers.",
-                       "author":  "Sam",
-                       "kind":  "look",
-                       "preview":  "FF6A00F66004ED5607E44C0BDC430ED43B11CE3314C72C16C22618BE221ABB1F1BBA1D1CB91C1CBA1D1CBB1F1BBE221AC22618C72C16CE3314D43B11DC430EE44C0BED5607F66004FF6A00"
-                   },
-                   {
-                       "file":  "rainbow.json",
-                       "name":  "Rainbow",
-                       "description":  "Every colour, rolling end to end.",
-                       "author":  "Sam",
-                       "kind":  "look",
-                       "preview":  "FF0000FF3D00FF7A00FFB800FFF500CCFF008FFF0052FF0014FF0000FF2900FF6600FFA300FFE000E0FF00A3FF0066FF0029FF1400FF5200FF8F00FFCC00FFFF00F5FF00B8FF007AFF003D"
-                   },
-                   {
-                       "file":  "police-lights.json",
-                       "name":  "Police lights",
-                       "description":  "Red then blue, double flashes, the two halves of the bar taking turns.",
-                       "author":  "Sam",
-                       "kind":  "animation",
-                       "preview":  "FF0000FF0000FF0000FF0000FF0000FF0000FF0000FF0000FF0000FF0000FF0000FF00000000000040FF0040FF0040FF0040FF0040FF0040FF0040FF0040FF0040FF0040FF0040FF0040FF"
                    },
                    {
                        "file":  "bitcoin-24h.json",
@@ -183,6 +159,7 @@
                        "description":  "A meter of the change in the price of bitcoin over the last day: half way is no change, full is up 10% or more, empty is down 10% or more. From CoinGecko, every 5 minutes.",
                        "author":  "Sam",
                        "kind":  "live meter",
+                       "category":  "Prices",
                        "preview":  "F7931AF7931AF7931AF7931AF7931AF7931AF7931AF7931AF7931AF7931AF7931AF7931AF7931AF7931AF7931A111418111418111418111418111418111418111418111418111418111418"
                    }
                ]

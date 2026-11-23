@@ -21,6 +21,10 @@ main{max-width:860px;margin:0 auto;padding:22px 16px 60px;display:flex;flex-dire
 .card{position:relative;overflow:hidden;border-radius:28px;padding:22px 24px;border:1px solid color-mix(in srgb,var(--c) 18%,var(--line));
 background:linear-gradient(160deg,color-mix(in srgb,var(--c) var(--tint),var(--cardA)),var(--cardB) 70%)}
 .head{display:flex;align-items:center;gap:12px}.head b{font-size:16px;font-weight:600}
+.storebar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:12px 0}.storebar input{flex:1 1 200px;min-width:0;height:36px;border-radius:999px;padding:0 14px}
+.chips{display:flex;flex-wrap:wrap;gap:6px}.chips button{height:32px;font-size:12.5px}.chips button[aria-pressed="true"],.pager button[aria-current]{background:var(--text);color:var(--bg)}
+.pager{display:flex;justify-content:center;flex-wrap:wrap;gap:6px;margin-top:12px}.pager:empty{display:none}.pager button{min-width:36px;height:32px;padding:0 10px;font-size:12.5px}.pager button:disabled{opacity:.4;cursor:default}
+.store .none{grid-column:1/-1;padding:18px;text-align:center;color:var(--t2);font-size:13px}
 .chip{padding:4px 11px;border-radius:999px;font-size:12px;font-weight:600;background:color-mix(in srgb,var(--c) 28%,transparent)}
 .chip.newv{margin-left:6px;height:auto;min-height:0;padding:4px 11px;font-size:12px;border:0;cursor:pointer;color:#0b0f14;background:#22c55e;animation:newv 2.4s ease-in-out infinite}.chip.newv:hover{filter:brightness(1.1)}
 @keyframes newv{0%,100%{box-shadow:0 0 0 0 rgba(34,197,94,.5)}50%{box-shadow:0 0 0 6px rgba(34,197,94,0)}}
@@ -36,7 +40,7 @@ h2{font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--t3);m
 .acts{display:flex;gap:6px}.rowmore{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:0 0 10px 98px;font-size:13px;color:var(--sub)}.rowmore[hidden]{display:none}
 @media(max-width:560px){.rowmore{padding-left:0}}
 input[type=color]{width:44px;height:32px;padding:0;border:0;border-radius:10px;background:none}
-select,input[type=text],input[type=password],input[type=file]{width:100%;height:34px;border-radius:12px;border:1px solid var(--line);background:rgba(var(--ink),.06);color:var(--text);padding:0 10px;font:inherit;font-size:13.5px}
+select,input[type=text],input[type=search],input[type=password],input[type=file]{width:100%;height:34px;border-radius:12px;border:1px solid var(--line);background:rgba(var(--ink),.06);color:var(--text);padding:0 10px;font:inherit;font-size:13.5px}
 /* The open list of a select is drawn by the browser, not by the rule above: without these it came up as white text on a white list. */
 select,input[type=time]{color-scheme:var(--scheme)}
 input[type=time]{height:34px;border-radius:12px;border:1px solid var(--line);background:rgba(var(--ink),.06);color:var(--text);padding:0 10px;font:inherit;font-size:13.5px}
@@ -178,7 +182,9 @@ background:color-mix(in srgb,var(--bg) 88%,transparent);backdrop-filter:blur(14p
   <div class="msg" id="admsg"></div>
   <div class="panel" id="storepanel">
     <div class="head2" style="margin:0"><h2>Store</h2><span class="sp"><span class="sub" id="storenote" style="align-self:center"></span><button id="adup">Upload a file</button><input id="adfile" type="file" accept=".json,application/json" hidden></span></div>
+    <div class="storebar"><input id="storeq" type="search" placeholder="Search the store" aria-label="Search the store" autocomplete="off" spellcheck="false"><span class="chips" id="storecats" role="group" aria-label="Categories"></span></div>
     <div class="store" id="storelist"></div>
+    <div class="pager" id="storepager"></div>
   </div>
   <details class="byo"><summary>Build your own</summary>
     <div class="sub" style="margin-top:10px">An add-on <b>file</b> is a few lines of JSON the bar runs itself: a look, meters, an animation, or a live meter read from a web address. Upload one here, or add yours to the store's folder on GitHub (<a href="https://github.com/ImSammyTTV/Panda-State/tree/main/addons/store" target="_blank" rel="noopener">format and examples</a>).</div>
@@ -320,7 +326,8 @@ const ZONES={'UTC':'UTC0','Australia/Melbourne':'AEST-10AEDT,M10.1.0,M4.1.0/3','
 function lookStrip(sw,fx,a,b){const dim='#1a2029',hue=i=>'hsl('+Math.round(i*14.4)+',90%,58%)';
   const at={solid:()=>a,breathe:i=>i%4<2?a:b,fill:i=>i<15?a:dim,flash:()=>a,chase:i=>i%8<2?a:dim,rainbow:hue,gradient:i=>i<12?a:b,waves:i=>i%5<3?a:b,scroll:i=>i%6<3?a:b,
     theatre:i=>i%3===0?a:b,scanner:i=>i>9&&i<15?a:dim,meteor:i=>i<9?(i>5?a:b):dim,fire:i=>['#ffe08a','#ffb347','#ff7a1a','#e53b10','#8a1b08','#3a0b04'][Math.min(5,Math.floor(i/4))],
-    twinkle:i=>i%5===1?a:dim,sparkle:i=>i%4===2?'#ffffff':a,rain:i=>i%6===4?a:dim,aurora:i=>i%6<3?a:b,heartbeat:i=>i<12?a:b,strobe:i=>i%2?a:dim,candle:i=>i%3?a:b,ripple:i=>Math.abs(i-12)%4<2?a:b,stack:i=>i<10?a:b};
+    twinkle:i=>i%5===1?a:dim,sparkle:i=>i%4===2?'#ffffff':a,rain:i=>i%6===4?a:dim,aurora:i=>i%6<3?a:b,heartbeat:i=>i<12?a:b,strobe:i=>i%2?a:dim,candle:i=>i%3?a:b,ripple:i=>Math.abs(i-12)%4<2?a:b,stack:i=>i<10?a:b,fade:()=>a,plasma:i=>i%7<4?a:b,lava:i=>i%9<5?a:b,juggle:i=>i===4||i===13||i===20?a:dim,bounce:i=>i===2||i===9||i===17?a:dim,
+    dissolve:i=>(i*7)%5<2?b:a,fireworks:i=>i>=5&&i<=7||i>=16&&i<=18?(i<10?a:b):dim,lightning:i=>i>=8&&i<15?'#ffffff':b,highlight:i=>i%6===3?b:a,drip:i=>i===24||i===11?a:dim};
   const f=at[fx]||(()=>a);[...sw.children].forEach((el,i)=>{el.style.background=f(i);});}
 const myZone=(()=>{try{return Intl.DateTimeFormat().resolvedOptions().timeZone;}catch(e){return '';}})();
 function fixedZone(){const m=-new Date().getTimezoneOffset(),h=Math.trunc(Math.abs(m)/60),mm=Math.abs(m)%60;const label='UTC'+(m<0?'-':'+')+h+(mm?':'+String(mm).padStart(2,'0'):'');return [label+' (no daylight saving)','<'+(m<0?'-':'+')+String(h).padStart(2,'0')+(mm?String(mm).padStart(2,'0'):'')+'>'+(m<0?'':'-')+h+(mm?':'+String(mm).padStart(2,'0'):'')];}
@@ -388,7 +395,19 @@ function drawStore(){
   window.storeFor=storeKey(last);
   const kept=(last&&last.library)||[],slots=(last&&last.librarySlots)||0;
   $('storenote').textContent=idx.addons.length+' from GitHub'+(slots?' · '+kept.length+' of '+slots+' kept on the bar':'');
-  $('storelist').innerHTML=idx.addons.map(a=>{const url=STORE+a.file,saved=kept.find(k=>k.url===url),using=last&&(saved?saved.active:last.addonFile.url===url),cols=(a.preview||'').match(/[0-9a-fA-F]{6}/g)||[];
+  /* Search, a category and pages, all in the page: nothing is fetched again. */
+  const ORDER=['Printer','Weather','Prices','Reminders'],cats=[...new Set(idx.addons.map(storeCat))].sort((x,y)=>(ORDER.indexOf(x)+1||99)-(ORDER.indexOf(y)+1||99)),q=(window.storeQ||'').trim().toLowerCase();
+  if(window.storeCats!==cats.join()){window.storeCats=cats.join();
+    $('storecats').innerHTML=['All',...cats].map(c=>'<button data-cat="'+esc(c)+'">'+esc(c)+'</button>').join('');}
+  const cat=window.storeCatOn||'All';[...$('storecats').children].forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.cat===cat)));
+  const shown=idx.addons.filter(a=>(cat==='All'||storeCat(a)===cat)&&(!q||[a.name,a.description,a.kind,storeCat(a),a.author].join(' ').toLowerCase().includes(q)));
+  const per=window.matchMedia('(max-width:560px)').matches?4:9,pages=Math.max(1,Math.ceil(shown.length/per));
+  window.storePage=Math.min(Math.max(1,window.storePage||1),pages);
+  const page=shown.slice((window.storePage-1)*per,window.storePage*per);
+  $('storepager').innerHTML=pages<2?'':'<button data-page="'+(window.storePage-1)+'"'+(window.storePage===1?' disabled':'')+' aria-label="Previous page">‹</button>'
+    +Array.from({length:pages},(_,i)=>'<button data-page="'+(i+1)+'"'+(i+1===window.storePage?' aria-current="page"':'')+'>'+(i+1)+'</button>').join('')
+    +'<button data-page="'+(window.storePage+1)+'"'+(window.storePage===pages?' disabled':'')+' aria-label="Next page">›</button>';
+  $('storelist').innerHTML=!page.length?'<div class="none">Nothing in the store matches'+(q?' "'+esc(q)+'"':'')+(cat!=='All'?' in '+esc(cat):'')+'.</div>':page.map(a=>{const url=STORE+a.file,saved=kept.find(k=>k.url===url),using=last&&(saved?saved.active:last.addonFile.url===url),cols=(a.preview||'').match(/[0-9a-fA-F]{6}/g)||[];
     return '<div class="tile"'+(using?' data-on':'')+'><div class="t"><span>'+esc(a.name)+'</span><em class="tag">'+esc(a.kind)+'</em></div>'
       +(cols.length===25?'<div class="sw" data-f="'+esc(a.file)+'">'+cols.map(c=>'<i style="background:#'+c+'"></i>').join('')+'</div>':'')
       +'<div class="d">'+esc(a.description)+'</div><div class="sub">'+(a.author?'by '+esc(a.author):'')+'</div>'
@@ -408,7 +427,8 @@ let GLOW=true;
 function lookSim(look,fillPct){
   const N=25,c1=hex3(look.colour),c2=look.colour2&&look.colour2!=='auto'?hex3(look.colour2):partner(c1),fx=look.effect||'solid',speed=look.speed||50;
   const pal=[c1,c2],mix=(a,b,k)=>[0,1,2].map(i=>a[i]+(b[i]-a[i])*k),along=(x)=>{const f=(((x%1)+1)%1)*2,i=Math.floor(f);return mix(pal[i%2],pal[(i+1)%2],f-i);};
-  const heat=new Array(N).fill(0),glow=new Array(N).fill(0),tint=[...Array(N)].map(()=>[0,0,0]),flick=new Array(N).fill(0);let drops=[],flickAll=1;
+  const heat=new Array(N).fill(0),glow=new Array(N).fill(0),tint=[...Array(N)].map(()=>[0,0,0]),flick=new Array(N).fill(0),dis=new Array(N).fill(0),disTo=new Array(N).fill(false);let drops=[],flickAll=1,bolt=0,bFrom=0,bTo=0;
+  const W=[255,255,255];
   const cyc=(x,p)=>((x%p)+p)%p;
   return (t,dt)=>{
     const rate=0.1+speed/100*1.9,s=0.5+speed/100*7.5;let lamp=null;
@@ -419,6 +439,13 @@ function lookSim(look,fillPct){
     else if(fx==='sparkle'){lamp=[];for(let i=0;i<N;i++){glow[i]=Math.max(0,glow[i]-dt*6);if(Math.random()<dt*s*0.8)glow[i]=1;lamp.push([mix(c1,[255,255,255],glow[i]),0.55+0.45*glow[i]]);}}
     else if(fx==='rain'){drops=drops.map(d=>d-dt*s*5).filter(d=>d>=-4);if(drops.length<8&&Math.random()<dt*s*0.9)drops.push(N-1);
       const lv=new Array(N).fill(0);for(const d of drops)for(let j=0;j<4;j++){const i=Math.round(d+j);if(i>=0&&i<N)lv[i]=Math.max(lv[i],1-j/4);}lamp=lv.map(l=>[c1,l]);}
+    else if(fx==='dissolve'){lamp=[];for(let i=0;i<N;i++){if(Math.random()<dt*s*0.25)disTo[i]=!disTo[i];dis[i]+=((disTo[i]?1:0)-dis[i])*Math.min(1,dt*4);lamp.push([mix(c1,c2,dis[i]),1]);}}
+    else if(fx==='fireworks'){if(Math.random()<dt*s*0.6){const at=Math.floor(Math.random()*N),col=along(Math.random());for(let j=-2;j<=2;j++){const i=at+j;if(i<0||i>=N)continue;const v=j===0?1:Math.abs(j)===1?0.6:0.25;if(v>=glow[i]){glow[i]=v;tint[i]=col;}}}
+      lamp=[];for(let i=0;i<N;i++){glow[i]=Math.max(0,glow[i]-dt*1.4);lamp.push([mix(tint[i],W,glow[i]>0.85?(glow[i]-0.85)*4:0),glow[i]]);}}
+    else if(fx==='lightning'){if(bolt>0)bolt=Math.max(0,bolt-dt*7);else if(Math.random()<dt*s*0.25){bolt=1;bFrom=Math.floor(Math.random()*N);bTo=Math.min(N,bFrom+4+Math.floor(Math.random()*14));}
+      else if(Math.random()<dt*1.2&&bTo>bFrom)bolt=0.7;if(bolt===0&&Math.random()<dt*1.5)bTo=bFrom;
+      lamp=[];for(let i=0;i<N;i++){const lit=bolt>0&&i>=bFrom&&i<bTo;lamp.push(lit?[mix(c1,W,0.5),bolt]:[c2,0.25]);}}
+    else if(fx==='highlight'){lamp=[];for(let i=0;i<N;i++){if(glow[i]<=0&&Math.random()<dt*s*0.12)glow[i]=2;if(glow[i]>0)glow[i]=Math.max(0,glow[i]-dt*0.8);const w=glow[i]>1?2-glow[i]:glow[i];lamp.push([mix(c1,c2,w),0.7+0.3*w]);}}
     else if(fx==='candle'){flickAll=Math.min(1,Math.max(0.55,flickAll+(Math.random()-0.5)*dt*s*2.2));flickAll+=(0.85-flickAll)*Math.min(1,dt*1.5);lamp=[];
       for(let i=0;i<N;i++){if(flick[i]<=0)flick[i]=0.8;flick[i]=Math.min(1,Math.max(0.5,flick[i]+(Math.random()-0.5)*dt*s*1.6));const v=Math.min(1,flickAll*flick[i]);lamp.push([mix(c2,c1,v),v]);}}
     const out=[];
@@ -431,6 +458,12 @@ function lookSim(look,fillPct){
         case 'heartbeat':{const h=cyc(t*s*0.25,1),beat=(x,at)=>{const d=(x-at)/0.045;return Math.exp(-d*d);},b=Math.max(beat(h,0.08),0.7*beat(h,0.28));col=mix(c2,c1,b);v=Math.sqrt(0.04+0.96*b);break;}
         case 'strobe':{const on=cyc(t*s*0.6,1)<0.12;col=on?c1:c2;v=on?1:0;break;}
         case 'ripple':{const w=0.5+0.5*Math.sin(Math.abs(i-(N-1)/2)*0.9-cyc(t*s*1.6,2*Math.PI));col=mix(c2,c1,w);v=0.3+0.7*w;break;}
+        case 'fade':col=mix(c1,c2,0.5-0.5*Math.cos(cyc(t*s*0.4,2*Math.PI)));break;
+        case 'plasma':{const x=0.5+0.25*(Math.sin(i*0.4+cyc(t*s*0.9,2*Math.PI))+Math.sin(i*0.23-cyc(t*s*0.6,2*Math.PI)));col=along(0.5*x+cyc(t*0.03*s,1));v=0.55+0.45*x;break;}
+        case 'lava':{const raw=0.5+0.5*Math.sin(i*0.31+cyc(t*s*0.15,2*Math.PI))*Math.cos(i*0.13-cyc(t*s*0.11,2*Math.PI)),m=Math.min(1,Math.max(0,(raw-0.35)/0.3)),sm=m*m*(3-2*m);col=mix(c2,c1,sm);v=0.45+0.55*sm;break;}
+        case 'juggle':case 'bounce':{let k=0;for(let n=0;n<3;n++){const p=fx==='juggle'?(N-1)*(0.5+0.5*Math.sin(cyc(t*s*(0.55+0.21*n)+n*2.1,2*Math.PI))):(N-1)*Math.abs(Math.sin(cyc(t*s*(0.45+0.13*n)+n*0.9,Math.PI)));
+          const d=(i-p)/(fx==='juggle'?1.3:0.8),g=Math.exp(-d*d);if(g>k){k=g;col=along(n/3);}}v=Math.sqrt(k);break;}
+        case 'drip':{const dp=cyc(t*s*0.2,1);let k=0;if(dp<0.5){if(i===N-1)k=Math.sqrt(dp*2);}else{const f=(dp-0.5)*2,pos=(N-1)*(1-f*f),b=i-pos;k=b<-0.5?0:b<0.5?1:b<3?1-b/3:0;if(f>0.9&&i<3){k=Math.max(k,(1-(f-0.9)*10)*(1-i/3));col=mix(c1,c2,0.5);}}v=Math.sqrt(Math.min(1,Math.max(0,k)));break;}
         case 'stack':{const st=cyc(t*s*0.12,2),edge=st<1?st*N:(2-st)*N,on=Math.min(1,Math.max(0,edge-i));col=mix(c2,c1,on);v=0.35+0.65*on;break;}
         case 'rainbow':col=hue((i/N+t*rate*0.2)%1);break;
         case 'gradient':col=mix(c1,c2,i/(N-1));break;
@@ -515,6 +548,11 @@ const fillIn=(text,fill)=>{for(const [k,v] of Object.entries(fill))text=text.spl
 const pad2=(n)=>String(n).padStart(2,'0'),localStamp=(d)=>d.getFullYear()+'-'+pad2(d.getMonth()+1)+'-'+pad2(d.getDate())+'T'+pad2(d.getHours())+':'+pad2(d.getMinutes());
 /* The same, on a clock in the bar's time zone, which is where the bar reads a countdown's times. That need not be this browser's zone: a bar never told its zone keeps UTC, and its countdowns ended hours out (0.7.11). A zone the browser does not know by name is one of the fixed offsets this page offered, which came from the browser's own clock. */
 const barStamp=(d)=>{try{const p={};new Intl.DateTimeFormat('en-CA',{timeZone:last.config.time.zone,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).formatToParts(d).forEach(x=>{p[x.type]=x.value;});return p.year+'-'+p.month+'-'+p.day+'T'+p.hour+':'+p.minute;}catch(e){return localStamp(d);}};
+/* The store's category: from the index, or worked out from its kind for an index that has none. */
+const storeCat=(a)=>a.category||({printer:'Printer',maintenance:'Reminders',countdown:'Reminders',look:'Looks',animation:'Looks'}[a.kind])||(/weather|rain|uv|wind|storm|air/i.test(a.file)?'Weather':'Prices');
+$('storeq').oninput=()=>{window.storeQ=$('storeq').value;window.storePage=1;drawStore();};
+$('storecats').onclick=(e)=>{const b=e.target.closest('button');if(!b)return;window.storeCatOn=b.dataset.cat;window.storePage=1;drawStore();};
+$('storepager').onclick=(e)=>{const b=e.target.closest('button');if(!b||b.disabled)return;window.storePage=+b.dataset.page;drawStore();$('storepanel').scrollIntoView({behavior:'smooth',block:'start'});};
 $('storelist').onclick=(e)=>{const b=e.target.closest('button');if(b&&b.dataset.use){useKept(b.dataset.use);return;}if(!b||!b.dataset.url)return;
   const url=b.dataset.url,card=b.closest('.tile'),name=card?card.querySelector('.t span').textContent:'Add-on';
   /* A place (weather, air): the town is found with Open-Meteo's free place search, and only its coordinates go to the bar. */
