@@ -53,7 +53,7 @@
 
 /* What the firmware calls itself on its page and in /api/status. Plain and generic, so it says what it is on anyone's network. */
 #define FW_NAME "panda"
-#define FW_VERSION "0.7.22"
+#define FW_VERSION "0.7.23"
 /* Where new releases and the add-on store live. A release must carry a
    panda-<board>-custom-<version>.bin for each board and a SHA256SUMS.txt that lists them. */
 #define UPDATE_REPO "ImSammyTTV/Panda-State"
@@ -104,6 +104,9 @@ static const char *BUILD_ID = FW_VERSION " " __DATE__ " " __TIME__;
 static const size_t BOARD_TAG_PREFIX = 18;   // "PANDA-STATE-BOARD:"
 extern "C" const char PANDA_BOARD_TAG[] __attribute__((section(".rodata_custom_desc"), used, aligned(4))) =
   "PANDA-STATE-BOARD:" BOARD_ID ";" FW_VERSION " " __DATE__ " " __TIME__;
+
+/* The largest firmware image the bar takes: the last 64 KB block of each app slot holds the add-on library (0.7.23), and an update erases whole 64 KB blocks as it goes. */
+static const uint32_t LIB_IMAGE_LIMIT = 0x1F0000 - 0x10000;
 
 static char hostName[33] = STOCK_HOST;  // what the bar answers to on the network, without ".local"
 /* Whether a name ends in ".local", in any case: mDNS names are not case-sensitive, and "printer.LOCAL" was sent to ordinary DNS, which cannot answer it. */
@@ -517,9 +520,34 @@ static const char *applyConfig(JsonVariantConst doc) {
 static bool cfgSaveOk = true;
 static String cfgSaved;  // what the store holds, so an unchanged save writes nothing
 static SemaphoreHandle_t cfgLock;   // the page, Home Assistant and the add-on task all save: one at a time
+/* The looks as built, before any saved setting: a saved look keeps only what differs from these. */
+static Look lookDefaults[ST_COUNT];
+
+/* Leaves out of a look whatever matches its default, and a look that matches entirely. The settings store is 12 KB shared with stock, and the full settings (about 2.3 KB by 0.7.22) no longer fitted on some bars: "the settings store is full". Any build reads the result, since a field left out is the default it starts from. */
+static void pruneLooks(JsonDocument &doc) {
+  JsonObject states = doc["states"];
+  for (int i = 0; i < ST_OFF; i++) {
+    JsonObject one = states[ST_NAMES[i]];
+    if (one.isNull()) continue;
+    const Look &l = looks[i], &d = lookDefaults[i];
+    if (l.colour == d.colour) one.remove("colour");
+    if (l.colour2 == d.colour2) { one.remove("colour2"); one.remove("colour2Auto"); }
+    else if (l.colour2 == AUTO) one.remove("colour2");   // colour2Auto alone says it
+    else one.remove("colour2Auto");
+    if (l.effect == d.effect) one.remove("effect");
+    if (l.speed == d.speed) one.remove("speed");
+    if (l.level == d.level) one.remove("level");
+    if (l.limit == d.limit) one.remove("limit");
+    if (l.on == d.on) one.remove("on");
+    if (!one.size()) states.remove(ST_NAMES[i]);
+  }
+  if (!states.size()) doc.remove("states");
+}
+
 static void saveConfigNow() {
   JsonDocument doc;
   configToJson(doc);
+  pruneLooks(doc);
   String text;
   serializeJson(doc, text);
   if (text == cfgSaved && cfgSaveOk) return;
@@ -2938,6 +2966,7 @@ static void handleUpdateChunk() {
       imageTag(upload.buf, upload.currentSize, board, sizeof board, build, sizeof build);
       if (board[0] && strcmp(board, BOARD_ID)) { Update.abort(); uploadOk = false; strlcpy(uploadBoard, board, sizeof uploadBoard); barProgress = -1; }
     }
+    if (uploadOk && Update.progress() + upload.currentSize > LIB_IMAGE_LIMIT) { Update.abort(); uploadOk = false; barProgress = -1; }   // would reach the add-on library
     if (uploadOk && !Update.hasError()) Update.write(upload.buf, upload.currentSize);
     if (uploadOk && whole) barProgress = (int8_t)min<uint64_t>(99, (uint64_t)upload.totalSize * 100 / whole);
   } else if (upload.status == UPLOAD_FILE_END) {
@@ -3179,6 +3208,7 @@ static bool updInstall() {
   if (code != 200) return updFail("Download: " + f.error(code));
   const int total = f.http.getSize();
   if (total <= 0) return updFail("The download did not say how big it is");
+  if ((uint32_t)total > LIB_IMAGE_LIMIT) return updFail("The download is bigger than the bar takes (1.87 MB)");
   if (!Update.begin(total)) return updFail(String("Will not fit: ") + Update.errorString());
 
   mbedtls_sha256_context sha;
@@ -3461,11 +3491,13 @@ static const char *faCheck(const String &text) {
  * time, as before; the others wait.
  *
  * The settings store is 12 KB shared with stock, far too small for several
- * files, so they are kept at the top of the "coredump" partition instead
- * (64 KB, in every BTT image's table). A crash report is written from the
- * bottom of that partition and only as far as it needs, which is well short
- * of the top 24 KB used here; each slot carries a checksum, so one that a
- * crash report did reach is read as empty rather than as a broken file.
+ * files. 0.7.18 to 0.7.22 looked for room in the "coredump" partition, which
+ * on the P2 turned out to be 4 KB. Since 0.7.23 they are kept in the last
+ * 24 KB of an app slot: each slot is 1.94 MB and a Panda State image about
+ * 1.4 MB, and an update erases and writes only as far as its image goes. The
+ * end of a slot is used only if it is blank or already holds the library,
+ * so stock firmware left in a slot is never written over; each slot carries
+ * a checksum, so one that is damaged reads as empty rather than broken.
  *
  * Each slot is one 4 KB flash sector: a header, the address it came from (if
  * any), then the file.
@@ -3481,6 +3513,19 @@ static char libActive[16] = "";   // the slot that runs, by id (kept in the sett
 
 static uint32_t libOffset(int slot) { return libPart->size - (uint32_t)(LIB_SLOTS - slot) * LIB_SECTOR; }
 
+/* Whether the end of this app slot can hold the library: every sector blank or already the library's. found: one of them is. */
+static bool libRoomIn(const esp_partition_t *part, bool &found) {
+  found = false;
+  if (!part || part->size < LIB_IMAGE_LIMIT + LIB_SLOTS * LIB_SECTOR) return false;
+  std::unique_ptr<uint32_t[]> buf(new uint32_t[LIB_SECTOR / 4]);
+  for (int i = 0; i < LIB_SLOTS; i++) {
+    if (esp_partition_read(part, part->size - (uint32_t)(LIB_SLOTS - i) * LIB_SECTOR, buf.get(), LIB_SECTOR) != ESP_OK) return false;
+    if (buf[0] == LIB_MAGIC) { found = true; continue; }
+    for (uint32_t w = 0; w < LIB_SECTOR / 4; w++) if (buf[w] != 0xFFFFFFFF) return false;
+  }
+  return true;
+}
+
 static uint32_t libCrc(const LibHead &h, const char *url, const char *text) {
   uint32_t crc = esp_rom_crc32_le(0, (const uint8_t *)h.id, sizeof h.id + sizeof h.name);
   crc = esp_rom_crc32_le(crc, (const uint8_t *)url, h.urlLen);
@@ -3490,14 +3535,20 @@ static uint32_t libCrc(const LibHead &h, const char *url, const char *text) {
 /* Reads what each slot holds, once at start. A slot is used only if its checksum is right. */
 static void libBegin() {
   libLock = xSemaphoreCreateMutex();
-  libPart = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_COREDUMP, nullptr);
-  if (!libPart) libPart = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_ANY, "coredump");
-  if (!libPart) { logLine("Add-on library: this bar's partition table has no coredump partition, so add-ons are not kept"); return; }
-  if (libPart->size < LIB_SLOTS * LIB_SECTOR * 2) {
-    logLine("Add-on library: the coredump partition is %u KB, too small to keep add-ons", (unsigned)(libPart->size / 1024));
-    libPart = nullptr;
-    return;
+  /* The slot that already holds the library, else the first whose end is blank: app1, then app0. */
+  const esp_partition_t *slots[2] = {
+    esp_partition_find_first(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_1, nullptr),
+    esp_partition_find_first(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_0, nullptr),
+  };
+  const esp_partition_t *blank = nullptr;
+  for (const esp_partition_t *part : slots) {
+    bool found;
+    if (!libRoomIn(part, found)) continue;
+    if (found) { libPart = part; break; }
+    if (!blank) blank = part;
   }
+  if (!libPart) libPart = blank;
+  if (!libPart) { logLine("Add-on library: no blank room at the end of either app slot, so add-ons are not kept"); return; }
   std::unique_ptr<char[]> buf(new char[LIB_SECTOR]);
   int count = 0;
   for (int i = 0; i < LIB_SLOTS; i++) {
@@ -3517,7 +3568,7 @@ static void libBegin() {
     lib[i].len = h.len;
     count++;
   }
-  logLine("Add-on library: %d of %d slots in use", count, LIB_SLOTS);
+  logLine("Add-on library: %d of %d slots in use, at the end of %s", count, LIB_SLOTS, libPart->label);
 }
 
 static int libFind(const char *id) {
@@ -4517,7 +4568,9 @@ void setup() {
             resetText(esp_reset_reason()), running ? running->label : "?", (unsigned)ESP.getFreeHeap());
   }
   prefs.begin("panda", false);
+  for (int i = 0; i < ST_COUNT; i++) lookDefaults[i] = looks[i];
   loadConfig();
+  saveConfig();   // rewritten in the shorter form the first time a build that writes it starts (0.7.23); after that it matches and nothing is written
   outBegin();
 
   printSeconds = printSecondsSaved = prefs.getUInt("printsec", 0);
@@ -4737,6 +4790,11 @@ static void handleLog() {
   const uint32_t up = millis() / 1000;
   out += String("Up: ") + (up / 86400) + " d " + (up / 3600 % 24) + " h " + (up / 60 % 60) + " min; last start: " + resetText(esp_reset_reason()) + "; starts in this log: " + logStore.starts + "\n";
   out += String("Memory: free ") + ESP.getFreeHeap() + ", lowest " + ESP.getMinFreeHeap() + ", largest block " + ESP.getMaxAllocHeap() + "\n";
+  {
+    nvs_stats_t st;
+    if (nvs_get_stats(NULL, &st) == ESP_OK) out += String("Settings store: ") + st.used_entries + " of " + st.total_entries + " entries used, " + st.free_entries + " free; last save " + (cfgSaveOk ? "ok" : "failed") + "\n";
+  }
+  out += String("Add-on library: ") + (libPart ? String(libPart->label) : String("none")) + "\n";
   out += String("Wi-Fi: ") + (WiFi.status() == WL_CONNECTED ? String("joined, ") + WiFi.RSSI() + " dBm" : String("not joined")) + (apUp ? "; setup hotspot on" : "") + "\n";
   out += String("Printer: ") + (prKind == PR_KLIPPER ? "Klipper" : "Bambu Lab") + (prConnected ? ", linked" : ", not linked") + (prGcode[0] ? String(", says ") + prGcode : String("")) + (prError[0] ? String(", ") + prError : String("")) + "\n";
   out += String("Home Assistant: ") + (haOn ? (haConnected ? "connected" : "not connected") : "off") + (haError[0] ? String(", ") + haError : String("")) + "\n";
