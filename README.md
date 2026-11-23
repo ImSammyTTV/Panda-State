@@ -14,11 +14,9 @@
 
 Open replacement firmware for BIQU's Panda light boards, written for the
 **Panda Status P2**, the 25-LED light bar for Bambu Lab **P2S** and **X2D**
-printers. It does what stock does, then adds a real cool-down, twenty-two
+printers. It does what stock does, then adds a real cool-down, thirty-two
 effects, add-ons, Home Assistant, Klipper, updates from GitHub and an open
 API.
-
-<p align="center"><sub>Free and open. If it makes your printer nicer to live with, a drink on <a href="https://ko-fi.com/imsammyttv">Ko-fi</a> helps fund the next feature.</sub></p>
 
 <p align="center"><img src="docs/live-leds.png" alt="The bar's own web page, its live picture of the 25 LEDs running the rainbow effect" width="640"></p>
 
