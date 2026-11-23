@@ -29,7 +29,7 @@ API.
 - 🏠 **Home Assistant** over MQTT: the bar appears by itself as a light with sensors, ready for automations.
 - 🌡️ **A real cool-down** after a print: the bar drains as the bed cools, then says *Ready*.
 - 🎨 **Every state restyled**: nine states, including *preparing* (heating, levelling and calibrating before the first layer), each with two colours, one of 32 effects, a speed, its own brightness and a time limit, and any of them can be switched off.
-- 🧩 **Add-ons and a store**: the loaded filament's colour and how much is left on the spool, AMS dryness, time left, heating up, a maintenance reminder, weather for your town, prices, looks and animations.
+- 🧩 **Add-ons and a store**: the loaded filament's colour and how much is left on the spool, AMS dryness, time left, heating up, a maintenance reminder, weather for your town, storm risk, air quality and prices. Looks and animations are effects on the state cards rather than add-ons, and you can still upload one of your own.
 - ⬆️ **Updates from GitHub**, checked against the release's checksums, installed with one click.
 - 📶 **Its own hotspot** when Wi-Fi fails, so you can always reach it.
 - 🎵 **Music mode**, a **schedule**, and an **open HTTP API** for your own apps.
