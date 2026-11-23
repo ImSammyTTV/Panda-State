@@ -155,7 +155,9 @@ On a phone the page is one column, with a tab bar along the bottom:
   warming. A maintenance reminder counts print hours and asks for a clean
   after 200.
   Pick from the [store](addons/store), upload a file of your own, or have any
-  program on your network post to the bar.
+  program on your network post to the bar. The bar keeps up to six add-ons,
+  so switching between them is instant, with nothing to download; one shows
+  at a time.
 - **Updates from GitHub.** The bar finds the newest release here, checks it
   against the release's SHA256 checksums, and installs it on trial. The bar
   itself fills in blue as it goes. An optional daily check only tells you; it
@@ -334,7 +336,7 @@ use it). `GET /api` returns this list.
 | `GET /api/frame` | | Just the 25 LED colours, as 150 hex digits |
 | `POST /api/state` | `{"state":"printing","progress":42}` | A controller saying what the printer is doing; repeat at least every 45 s |
 | `POST /api/addon` | see below | A program saying what it wants shown |
-| `POST /api/addonfile` | `{"url":"https://…"}`, `{"file":{…}}`, `{"remove":true}`, `{"maintenanceDone":true}` | An add-on the bar runs itself ([format](addons/store/README.md)); the last starts a maintenance reminder's count again |
+| `POST /api/addonfile` | `{"url":"https://…"}`, `{"file":{…}}`, `{"use":"<id>"}`, `{"remove":true,"id":"<id>"}`, `{"maintenanceDone":true}` | An add-on the bar runs itself ([format](addons/store/README.md)). Each one added is kept (up to six; `library` in the status lists them) and `use` switches to a kept one without downloading; `remove` without an id removes the one running; the last starts a maintenance reminder's count again |
 | `GET /api/log` | | A report for a bug report: version, state, settings and recent events, with nothing secret |
 | `POST /api/config` | any subset of the settings | `brightness`, `mode`, `music.sensitivity`, `states.<state>.{colour,colour2,effect,speed,level,limit}`, `cool.{minutes,target}`, `schedule.{…}`, `time.{tz,zone}`, `addon.{show,when}`, `order`, `reversed`, `glow` (false: unlit LEDs fully off); `stripLength` (original Panda Status and Lux), `split` (RGB Controller) |
 | `POST /api/preview` | `{"state":"cooling","progress":60,"seconds":8}` | Show a look for a few seconds |
