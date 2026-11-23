@@ -53,7 +53,7 @@
 
 /* What the firmware calls itself on its page and in /api/status. Plain and generic, so it says what it is on anyone's network. */
 #define FW_NAME "panda"
-#define FW_VERSION "0.7.18"
+#define FW_VERSION "0.7.19"
 /* Where new releases and the add-on store live. A release must carry a
    panda-<board>-custom-<version>.bin for each board and a SHA256SUMS.txt that lists them. */
 #define UPDATE_REPO "ImSammyTTV/Panda-State"
@@ -233,8 +233,11 @@ static const char *FX_NAMES[FX_COUNT] = {
   "heartbeat", "strobe", "candle", "ripple", "stack",
 };
 
-enum State : uint8_t { ST_IDLE, ST_PRINTING, ST_PAUSED, ST_FINISHED, ST_COOLING, ST_READY, ST_ERROR, ST_OFFLINE, ST_OFF, ST_COUNT };
-static const char *ST_NAMES[ST_COUNT] = {"idle", "printing", "paused", "finished", "cooling", "ready", "error", "offline", "off"};
+/* Preparing (0.7.19) goes last among the looks: settings keep states by name, and "off" has to stay after every look. */
+enum State : uint8_t { ST_IDLE, ST_PRINTING, ST_PAUSED, ST_FINISHED, ST_COOLING, ST_READY, ST_ERROR, ST_OFFLINE, ST_PREPARING, ST_OFF, ST_COUNT };
+static const char *ST_NAMES[ST_COUNT] = {"idle", "printing", "paused", "finished", "cooling", "ready", "error", "offline", "preparing", "off"};
+/* What a state that is switched off gives way to: the next one along that is on. Idle and offline go dark. */
+static const uint8_t ST_INSTEAD[ST_COUNT] = {ST_OFF, ST_IDLE, ST_PRINTING, ST_READY, ST_FINISHED, ST_IDLE, ST_IDLE, ST_OFF, ST_PRINTING, ST_OFF};
 
 /* colour2 is the second colour the two-colour effects use. AUTO means "work one out from the first", so a look set before 0.5.0 (or with only one colour given) still has a sensible partner. */
 static const uint32_t AUTO = 0xFFFFFFFF;
@@ -243,7 +246,8 @@ struct Look {
   uint32_t colour; uint8_t effect; uint8_t speed; uint32_t colour2;
   uint8_t level;    // this state's own brightness, 1-100; 0 uses the bar's
   uint16_t limit;   // minutes this state is shown before the bar moves on (idle and offline go dark, the rest go to idle); 0 for as long as it lasts
-  Look(uint32_t c = 0, uint8_t e = 0, uint8_t s = 50, uint32_t c2 = AUTO) : colour(c), effect(e), speed(s), colour2(c2), level(0), limit(0) {}
+  bool on;          // false: the state is skipped, and the bar shows the one it gives way to (ST_INSTEAD)
+  Look(uint32_t c = 0, uint8_t e = 0, uint8_t s = 50, uint32_t c2 = AUTO) : colour(c), effect(e), speed(s), colour2(c2), level(0), limit(0), on(true) {}
 };
 
 /* Idle, printing and error start close to the stock bar's own colours. */
@@ -256,6 +260,7 @@ static Look looks[ST_COUNT] = {
   /* ready    */ {0x1BFF00, FX_BREATHE, 40},
   /* error    */ {0xFF0000, FX_FLASH, 60},
   /* offline  */ {0x404040, FX_BREATHE, 15},
+  /* preparing*/ {0x00E5FF, FX_SCANNER, 50, 0x1BFF00},
   /* off      */ {0x000000, FX_SOLID, 50},
 };
 
@@ -395,6 +400,7 @@ static void configToJson(JsonDocument &doc) {
     one["speed"] = looks[i].speed;
     one["level"] = looks[i].level;
     one["limit"] = looks[i].limit;
+    one["on"] = looks[i].on;
   }
 }
 
@@ -494,6 +500,7 @@ static const char *applyConfig(JsonVariantConst doc) {
       if (!intIn(one["limit"], 0, 1440, limit)) return "A state is shown for 0-1440 minutes (0: as long as it lasts)";
       looks[at].limit = limit;
     }
+    if (!one["on"].isNull()) looks[at].on = one["on"].as<bool>();
   }
   return nullptr;
 }
@@ -638,6 +645,7 @@ static struct {
   int slotRemain; int unitRemain[4]; int unitHumid, unitHumidRaw;
   int timeLeft; float nozzle, nozzleTarget, bedTarget, chamber;
   bool gotTimeLeft, gotNozzle, gotNozzleTarget, gotBedTarget, gotChamber;
+  int stage; bool gotStage;   // 0.7.19: print.stg_cur, what the printer is doing (levelling, heating the bed...)
 } scan;
 
 /* What the printer has said about its filament, kept between messages: printers send only what changed. */
@@ -680,6 +688,8 @@ static void amsRemember(int id, int level, int raw) {
   if (raw >= 0) amsUnits[i].raw = constrain(raw, 0, 100);
 }
 static volatile int prTimeLeft = -1;                  // minutes left on the print, -1 not known
+/* Bambu: the stage the printer says it is at (print.stg_cur), -1 not known. Klipper: 1 while a print has started but not yet extruded (print_duration still 0), else 0. */
+static volatile int prStage = -1;
 static volatile float prNozzle = NAN, prNozzleTarget = NAN, prBedTarget = NAN, prChamber = NAN;
 
 /* "F72323FF" is colour then alpha; an alpha of 00 (or no colour) is an empty tray. */
@@ -710,6 +720,7 @@ static void scanFinish() {
   else if (!strcmp(p1, "print") && !strcmp(k, "nozzle_target_temper")) { scan.nozzleTarget = atof(v); scan.gotNozzleTarget = true; }
   else if (!strcmp(p1, "print") && !strcmp(k, "bed_target_temper")) { scan.bedTarget = atof(v); scan.gotBedTarget = true; }
   else if (!strcmp(p1, "print") && !strcmp(k, "chamber_temper")) { scan.chamber = atof(v); scan.gotChamber = true; }
+  else if (!strcmp(p1, "print") && !strcmp(k, "stg_cur")) { scan.stage = atoi(v); scan.gotStage = true; }
   else if (!strcmp(k, "tray_now") && !strcmp(p1, "ams")) { scan.trayNow = atoi(v); scan.gotTrayNow = true; }
   else if (!strcmp(k, "state") && !strcmp(p1, "extruder")) { scan.extState = atoi(v); scan.gotExtState = true; }
   /* A tray: inside ams.ams[].tray[], or an external spool (vt_tray, or vir_slot[] on dual-nozzle printers). */
@@ -834,6 +845,7 @@ static void scanCommit() {
   if (scan.gotNozzleTarget) prNozzleTarget = scan.nozzleTarget;
   if (scan.gotBedTarget) prBedTarget = scan.bedTarget;
   if (scan.gotChamber) prChamber = scan.chamber;
+  if (scan.gotStage) prStage = scan.stage;
   prLastMsgAt = millis();
 }
 
@@ -961,6 +973,8 @@ static void klipperPoll(const String &host, uint16_t port, const String &key) {
   {
     const float spent = st["print_stats"]["print_duration"] | -1.0f;
     prTimeLeft = !strcmp(gcode, "RUNNING") && spent > 0 && shown > 0.02f ? (int)lroundf(spent * (1 - shown) / shown / 60) : -1;
+    /* Klipper counts print_duration from the first extrusion: before it, the start G-code is homing, heating and levelling. */
+    prStage = !strcmp(gcode, "RUNNING") && spent == 0 ? 1 : 0;
   }
   prLastMsgAt = millis();
   prConnected = true;
@@ -987,7 +1001,7 @@ static void printerTask(void *) {
       prGcode[0] = 0; prPercent = -1; prBed = NAN; prLastMsgAt = 0;
       filTrayCount = 0; prTrayNow = -1; prActiveExt = 0;
       prSnow[0] = prSnow[1] = -1; prSnowSeen = false;
-      amsCount = 0; prTimeLeft = -1; prNozzle = prNozzleTarget = prBedTarget = prChamber = NAN;
+      amsCount = 0; prTimeLeft = -1; prNozzle = prNozzleTarget = prBedTarget = prChamber = NAN; prStage = -1;
     }
     /* Acknowledged here too: the link is already down, and a download that asks for it to be let go would otherwise wait out its whole patience. */
     if (prPaused) { prConnected = false; prHoldAck = true; prSetError("Paused while a firmware update downloads"); prWait(1000); continue; }
@@ -1131,10 +1145,37 @@ static void trackPrinter() {
   strlcpy(lastGcode, prGcode, sizeof lastGcode);
 }
 
+/* Getting ready to print: what Bambu printers call each step before the first layer (stg_cur), or Klipper before its first extrusion. Only at the very start of a print, so a filament change that heats the nozzle halfway through is still printing. */
+static bool printerPreparing() {
+  const int st = prStage;
+  if (prKind == PR_KLIPPER) return st == 1;
+  if (prPercent > 1) return false;
+  switch (st) {
+    case 1:  // auto bed levelling
+    case 2:  // heating the bed
+    case 3:  // vibration compensation
+    case 7:  // heating the nozzle
+    case 8:  // calibrating extrusion
+    case 9:  // scanning the bed surface
+    case 11: // identifying the build plate
+    case 12: // calibrating the micro lidar
+    case 13: // homing
+    case 14: // cleaning the nozzle tip
+    case 15: // checking the extruder temperature
+    case 18: // calibrating the micro lidar
+    case 19: // calibrating extrusion flow
+    case 25: // calibrating motor noise
+      return true;
+    default:
+      return false;
+  }
+}
+
 static State printerState(float &fill) {
   fill = prPercent < 0 ? 0 : prPercent;
   if (gcodeIs("PAUSE")) return ST_PAUSED;
-  if (gcodeIs("RUNNING") || gcodeIs("PREPARE") || gcodeIs("SLICING")) return ST_PRINTING;
+  if (gcodeIs("PREPARE") || gcodeIs("SLICING") || (gcodeIs("RUNNING") && printerPreparing())) return ST_PREPARING;
+  if (gcodeIs("RUNNING")) return ST_PRINTING;
   if (gcodeIs("FAILED")) return ST_ERROR;
   if (!gcodeIs("FINISH")) return ST_IDLE;
   /* Finished. Both halves of the cool-down as "how much is left"; the bar drains with whichever has further to go. If the bar started up after the print ended it does not know when that was, so only the bed can speak. */
@@ -1447,15 +1488,21 @@ static const char *applyExtraConfig(JsonVariantConst doc) {
 enum Source : uint8_t { SRC_NONE, SRC_PREVIEW, SRC_CONTROLLER, SRC_PRINTER };
 static const char *SRC_NAMES[] = {"none", "preview", "controller", "printer"};
 
+/* A state switched off on the page gives way to the next one that is on: cooling off goes straight to finished (or ready), preparing off shows printing. A look being tried is always shown as it is. */
+static State stateSwitchedOn(State state) {
+  for (int hops = 0; hops < ST_COUNT && state < ST_OFF && !looks[state].on; hops++) state = (State)ST_INSTEAD[state];
+  return state < ST_OFF && !looks[state].on ? ST_OFF : state;
+}
+
 /* What to show, how full "fill" is, and who decided. A controller that is speaking wins over the bar's own printer link: it is assumed to know more. */
 static State shownAsTold(float &fill, Source &source) {
   if (previewUntil && millis() < previewUntil) { fill = previewProgress; source = SRC_PREVIEW; return previewState; }
   previewUntil = 0;
-  if (everPushed && millis() - lastPushAt <= LINK_TIMEOUT_MS) { fill = progress; source = SRC_CONTROLLER; return current; }
-  if (printerFresh()) { source = SRC_PRINTER; return printerState(fill); }
-  fill = 0;
-  source = SRC_NONE;
-  return ST_OFFLINE;
+  State state;
+  if (everPushed && millis() - lastPushAt <= LINK_TIMEOUT_MS) { fill = progress; source = SRC_CONTROLLER; state = current; }
+  else if (printerFresh()) { source = SRC_PRINTER; state = printerState(fill); }
+  else { fill = 0; source = SRC_NONE; state = ST_OFFLINE; }
+  return stateSwitchedOn(state);
 }
 
 /* The state now told and since when. Kept by the loop task alone (trackState); shown() is also asked from Home Assistant's task and only reads them. */
@@ -1472,7 +1519,8 @@ static void trackState() {
   Source source;
   const State state = shownAsTold(fill, source);
   if (source == SRC_PREVIEW) return;   // a look being tried says nothing about the printer
-  if (state == ST_PRINTING) {
+  /* Counted from what the printer says too, so switching the printing look off does not stop the maintenance count. */
+  if (state == ST_PRINTING || state == ST_PREPARING || (source == SRC_PRINTER && gcodeIs("RUNNING"))) {
     printSeconds = printSeconds + 1;
     if (printSeconds - printSecondsSaved >= 600) { prefs.putUInt("printsec", printSeconds); printSecondsSaved = printSeconds; }
   }
@@ -1492,7 +1540,7 @@ static State shown(float &fill, Source &source) {
   const State state = shownAsTold(fill, source);
   if (source == SRC_PREVIEW || state >= ST_OFF || !stateOverLimit(state)) return state;
   fill = 0;
-  return state == ST_IDLE || state == ST_OFFLINE ? ST_OFF : ST_IDLE;
+  return state == ST_IDLE || state == ST_OFFLINE ? ST_OFF : stateSwitchedOn(ST_IDLE);
 }
 
 static void hsv(float h, uint8_t &r, uint8_t &g, uint8_t &b) {
@@ -2487,7 +2535,7 @@ static const char API_DOC[] PROGMEM = R"JSON({"about":"Panda State, open firmwar
 {"call":"GET /api/status","does":"Everything: what is showing and why, printer link, microphone, clock, add-ons, settings, the 25 LEDs as hex"},
 {"call":"POST /api/state","body":{"state":"idle|printing|paused|finished|cooling|ready|error|off","progress":"0-100"},"does":"A controller saying what the printer is doing. Repeat at least every 45 s; when it stops, the bar's own printer link takes over"},
 {"call":"POST /api/addon","body":{"id":"a-z0-9-_ up to 15","name":"shown on the page","ttl":"seconds this post stays valid, default 120","look":{"colour":"#RRGGBB","colour2":"#RRGGBB","effect":"any effect listed under /api/config","speed":"1-100","progress":"0-100"},"meters":[{"value":"0-100","colour":"#RRGGBB"}],"frame":"25 colours as a list of #RRGGBB or 150 hex digits"},"does":"An add-on saying what it wants shown: send ONE of look, meters (1-4) or frame, and keep posting. Shown only if picked under Add-ons. {id, remove:true} withdraws it"},
-{"call":"POST /api/config","body":{"brightness":"0-100","mode":"status|music","music":{"sensitivity":"low|medium|high|auto"},"states":{"<state>":{"colour":"#RRGGBB","colour2":"#RRGGBB or auto","effect":"solid|breathe|fill|flash|chase|rainbow|gradient|waves|scroll|theatre|scanner|meteor|fire|twinkle|sparkle|rain|aurora","speed":"1-100"}},"error":{"minutes":"0-1440: how long an error is shown before the idle look returns; 0 until it clears"},"cool":{"minutes":"0-120","target":"20-60"},"schedule":{"enabled":true,"from":"HH:MM","to":"HH:MM","level":"0-100"},"time":{"tz":"POSIX rule","zone":"label"},"addon":{"show":"<id> or empty","when":"idle|always"},"order":"GRB|RGB|...","reversed":false,"glow":"true: unlit LEDs keep a faint glow; false: fully off"},"does":"Change any subset of the settings; saved"},
+{"call":"POST /api/config","body":{"brightness":"0-100","mode":"status|music","music":{"sensitivity":"low|medium|high|auto"},"states":{"<state>":{"colour":"#RRGGBB","colour2":"#RRGGBB or auto","on":"true|false","effect":"solid|breathe|fill|flash|chase|rainbow|gradient|waves|scroll|theatre|scanner|meteor|fire|twinkle|sparkle|rain|aurora","speed":"1-100"}},"error":{"minutes":"0-1440: how long an error is shown before the idle look returns; 0 until it clears"},"cool":{"minutes":"0-120","target":"20-60"},"schedule":{"enabled":true,"from":"HH:MM","to":"HH:MM","level":"0-100"},"time":{"tz":"POSIX rule","zone":"label"},"addon":{"show":"<id> or empty","when":"idle|always"},"order":"GRB|RGB|...","reversed":false,"glow":"true: unlit LEDs keep a faint glow; false: fully off"},"does":"Change any subset of the settings; saved"},
 {"call":"POST /api/preview","body":{"state":"<state>","progress":"0-100","seconds":"1-120"},"does":"Show a state briefly without it counting as the printer's"},
 {"call":"POST /api/printer","body":{"ip":"...","serial":"...","code":"..."},"does":"Pair with a Bambu printer; {forget:true} unpairs"},
 {"call":"POST /api/printer","body":{"type":"klipper","host":"IP or name.local","port":"7125","key":"Moonraker API key, optional"},"does":"Follow a Klipper printer through Moonraker instead (polled every 2 s)"},

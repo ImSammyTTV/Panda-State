@@ -249,7 +249,10 @@ background:color-mix(in srgb,var(--bg) 88%,transparent);backdrop-filter:blur(14p
 <script>
 const $=(id)=>document.getElementById(id);
 const post=(path,body)=>fetch(path,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body||{})}).then(r=>r.json()).catch(()=>({ok:false,message:'The bar did not answer'}));
-const STATES=['idle','printing','paused','finished','cooling','ready','error','offline'];
+const STATES=['idle','preparing','printing','paused','finished','cooling','ready','error','offline'];
+/* What a state that is switched off gives way to (the firmware's ST_INSTEAD). */
+const INSTEAD={idle:'dark',preparing:'printing',printing:'idle',paused:'printing',finished:'ready',cooling:'finished',ready:'idle',error:'idle',offline:'dark'};
+const NOTE={preparing:'heating, levelling and calibrating before the first layer'};
 let built=false, busy=0;
 const bar=$('bar'); for(let i=0;i<25;i++) bar.appendChild(document.createElement('i'));
 
@@ -258,8 +261,8 @@ function build(s){
   $('rows').innerHTML='';
   for(const name of STATES){
     const look=s.config.states[name]; const card=document.createElement('div'); card.className='stc';
-    card.innerHTML='<div class="top"><b>'+name+'</b><span class="sub"></span></div><div class="sw"></div><div class="ctl"><input type="color" title="Colour" aria-label="'+name+' colour"><input type="color" title="Second colour, for the two-colour effects" aria-label="'+name+' second colour"><select aria-label="'+name+' effect"></select><span class="acts"><button>Try</button><button title="More for this state: its own brightness, and how long it is shown">More</button></span></div><div class="spdl"><label>Speed</label><input class="spd" type="range" min="1" max="100" aria-label="'+name+' speed"></div><div class="badges"><span></span><span></span></div>';
-    const [top,sw,ctl,spdl,badges]=card.children; const [colour,colour2,effect,acts]=ctl.children; const [tryIt,moreBtn]=acts.children; const speed=spdl.children[1];
+    card.innerHTML='<div class="top"><b>'+name+'</b><span class="sub"></span><label class="tog" title="Switched off, the bar skips this state and shows the next one instead"><input type="checkbox" aria-label="Show the '+name+' state"> On</label></div>'+(NOTE[name]?'<div class="sub" style="margin-top:-6px">'+NOTE[name]+'</div>':'')+'<div class="sw"></div><div class="ctl"><input type="color" title="Colour" aria-label="'+name+' colour"><input type="color" title="Second colour, for the two-colour effects" aria-label="'+name+' second colour"><select aria-label="'+name+' effect"></select><span class="acts"><button>Try</button><button title="More for this state: its own brightness, and how long it is shown">More</button></span></div><div class="spdl"><label>Speed</label><input class="spd" type="range" min="1" max="100" aria-label="'+name+' speed"></div><div class="badges"><span></span><span></span></div>';
+    const kids=[...card.children].filter(e=>e.className!=='sub'),[top,sw,ctl,spdl,badges]=kids; const onBox=top.querySelector('input'); const [colour,colour2,effect,acts]=ctl.children; const [tryIt,moreBtn]=acts.children; const speed=spdl.children[1];
     for(let i=0;i<25;i++) sw.appendChild(document.createElement('i'));
     /* The rest of a state's options, folded away under its row. */
     const more=document.createElement('div'); more.className='rowmore'; more.hidden=true;
@@ -278,10 +281,12 @@ function build(s){
     /* The card's picture and badges, from its own controls, so they follow an edit at once. */
     const paint=()=>{lookStrip(sw,effect.value,colour.value,colour2.value);top.children[1].textContent=effect.value+' · speed '+speed.value;
       badges.children[0].textContent=+level.value?level.value+'% brightness':"bar's brightness";
-      badges.children[1].textContent=+limit.value?(limit.value>=60&&limit.value%60===0?limit.value/60+' h':limit.value+' min')+' → '+(name==='idle'||name==='offline'?'dark':'idle'):'as long as it lasts';};
+      badges.children[1].textContent=+limit.value?(limit.value>=60&&limit.value%60===0?limit.value/60+' h':limit.value+' min')+' → '+(name==='idle'||name==='offline'?'dark':'idle'):'as long as it lasts';
+      card.style.opacity=onBox.checked?'':'.55';if(!onBox.checked)badges.children[1].textContent='switched off → shows '+INSTEAD[name];};
     const save=async(one)=>{busy=Date.now();paint();const r=await post('/api/config',{states:{[name]:one}});$('cfgmsg').textContent=r.ok?'Saved':(r.message||'Not saved');};
     colour.onchange=()=>save({colour:colour.value}); effect.onchange=()=>save({effect:effect.value}); speed.onchange=()=>save({speed:+speed.value}); colour2.onchange=()=>save({colour2:colour2.value});
     level.onchange=()=>save({level:+level.value}); limit.onchange=()=>save({limit:+limit.value});
+    onBox.checked=look.on!==false; onBox.onchange=()=>save({on:onBox.checked});
     tryIt.onclick=()=>post('/api/preview',{state:name,progress:60,seconds:8});
     speed.oninput=paint; colour.oninput=paint; colour2.oninput=paint;
     card.appendChild(more); $('rows').appendChild(card); paint();
@@ -614,7 +619,7 @@ async function tick(){
   [...$('sig').children].forEach((el,i)=>{el.style.background=i<bars?col:'';}); $('sig').hidden=!s.rssi;
   $('state').textContent=s.state;
   const look=s.config.states[s.state]; document.documentElement.style.setProperty('--c',look?look.colour:'#64748b');
-  const pct=(s.state==='printing'||s.state==='cooling'||s.state==='paused')?' · '+Math.round(s.progress)+'%':'';
+  const pct=(s.state==='printing'||s.state==='cooling'||s.state==='paused'||s.state==='preparing')?' · '+Math.round(s.progress)+'%':'';
   const music=s.mode==='music';
   $('mstatus').className=music?'':'go'; $('mmusic').className=music?'go':'';
   if(Date.now()-busy>3000) $('sens').value=s.config.music.sensitivity;
