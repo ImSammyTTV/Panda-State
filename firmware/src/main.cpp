@@ -51,7 +51,7 @@
 
 /* What the firmware calls itself on its page and in /api/status. Plain and generic, so it says what it is on anyone's network. */
 #define FW_NAME "panda"
-#define FW_VERSION "0.7.16"
+#define FW_VERSION "0.7.17"
 /* Where new releases and the add-on store live. A release must carry a
    panda-<board>-custom-<version>.bin for each board and a SHA256SUMS.txt that lists them. */
 #define UPDATE_REPO "ImSammyTTV/Panda-State"
@@ -264,6 +264,8 @@ static char order[4] = "RGB";   // the PWM channels are wired R, G, B (RGB_PINS)
 static char order[4] = "GRB";
 #endif
 static bool reversed = false;
+/* Whether the LEDs an effect leaves unlit (past a fill's edge, a breath's low point, a flash's off half) keep a faint glow, or go fully dark. */
+static bool glow = true;
 /* The cool-down the bar works out for itself when paired: "ready" only once this many minutes have passed AND the bed is at or below the target. A controller that pushes states makes its own decision and ignores these. */
 static uint8_t coolMinutes = 10;
 static uint8_t coolTarget = 35;
@@ -370,6 +372,7 @@ static void configToJson(JsonDocument &doc) {
   doc["brightness"] = brightness;
   doc["order"] = order;
   doc["reversed"] = reversed;
+  doc["glow"] = glow;
 #if defined(BOARD_STATUS)
   doc["stripLength"] = stripLength;
 #elif defined(BOARD_RGB)
@@ -409,6 +412,7 @@ static const char *applyConfig(JsonVariantConst doc) {
     strcpy(order, ORDERS[at]);
   }
   if (!doc["reversed"].isNull()) reversed = doc["reversed"].as<bool>();
+  if (!doc["glow"].isNull()) glow = doc["glow"].as<bool>();
 #if defined(BOARD_STATUS)
   if (!doc["stripLength"].isNull()) {
     int value;
@@ -1793,6 +1797,8 @@ static void render() {
   static uint32_t lastFrameMs = 0;
   const float dt = lastFrameMs ? min(0.1f, (millis() - lastFrameMs) / 1000.0f) : 0.025f;
   lastFrameMs = millis();
+  /* What an unlit LED shows: 0.2 squared below is a 4% glow (0.05 came out as nothing at all on the real LEDs, 0.1.0), or fully off when the owner turned the glow off (0.7.17: "the LEDs that should be off sit at 1%"). */
+  const float unlit = glow ? 0.2f : 0;
   const bool lampFx = !dark && look.effect >= FX_GRADIENT;
   if (lampFx) paintEffect(look.effect, look.colour, secondColour(look), look.speed, esp_timer_get_time() / 1e6, dt);   // microseconds since start in 64 bits: no wrap for centuries
 
@@ -1816,23 +1822,22 @@ static void render() {
       if (within >= meterSpan) v = 0;   // the gap
       else {
         const float lit = addon->meterValue[which] / 100.0f * meterSpan - within;
-        v = lit >= 1 ? 1 : lit > 0 ? max(lit, 0.2f) : 0.2f;
+        v = lit >= 1 ? 1 : lit > 0 ? max(lit, unlit) : unlit;
       }
     } else switch (dark ? FX_SOLID : look.effect) {
-      case FX_BREATHE: v = 0.10f + 0.90f * (0.5f - 0.5f * cosf(2 * PI * t * rate * 0.5f)); break;
+      case FX_BREATHE: v = (glow ? 0.10f : 0) + (glow ? 0.90f : 1) * (0.5f - 0.5f * cosf(2 * PI * t * rate * 0.5f)); break;
       case FX_FILL: {
         /* The LED the edge is in is lit in proportion, so progress moves smoothly rather than a whole LED at a time. The rest stay faintly lit so the bar never looks switched off mid-print. */
-        /* 0.2 is the floor because the level is squared below: 0.05 came out as nothing at all on the real LEDs (0.1.0). */
         float lit = fillTo - i;
-        v = lit >= 1 ? 1 : lit > 0 ? max(lit, 0.2f) : 0.2f;
+        v = lit >= 1 ? 1 : lit > 0 ? max(lit, unlit) : unlit;
         break;
       }
-      case FX_FLASH: v = fmodf(t * rate * 2, 1) < 0.5f ? 1 : 0.15f; break;
+      case FX_FLASH: v = fmodf(t * rate * 2, 1) < 0.5f ? 1 : (glow ? 0.15f : 0); break;
       case FX_CHASE: {
         float head = fmodf(t * rate * LED_COUNT * 0.5f, LED_COUNT);
         float behind = fmodf(head - i + LED_COUNT, LED_COUNT);
-        v = behind < 6 ? 1 - behind / 6 : 0.2f;
-        if (v < 0.2f) v = 0.2f;
+        v = behind < 6 ? 1 - behind / 6 : unlit;
+        if (v < unlit) v = unlit;
         break;
       }
       case FX_RAINBOW: hsv(fmodf((float)i / LED_COUNT + t * rate * 0.2f, 1), r, g, b); break;
@@ -2480,7 +2485,7 @@ static const char API_DOC[] PROGMEM = R"JSON({"about":"Panda State, open firmwar
 {"call":"GET /api/status","does":"Everything: what is showing and why, printer link, microphone, clock, add-ons, settings, the 25 LEDs as hex"},
 {"call":"POST /api/state","body":{"state":"idle|printing|paused|finished|cooling|ready|error|off","progress":"0-100"},"does":"A controller saying what the printer is doing. Repeat at least every 45 s; when it stops, the bar's own printer link takes over"},
 {"call":"POST /api/addon","body":{"id":"a-z0-9-_ up to 15","name":"shown on the page","ttl":"seconds this post stays valid, default 120","look":{"colour":"#RRGGBB","colour2":"#RRGGBB","effect":"any effect listed under /api/config","speed":"1-100","progress":"0-100"},"meters":[{"value":"0-100","colour":"#RRGGBB"}],"frame":"25 colours as a list of #RRGGBB or 150 hex digits"},"does":"An add-on saying what it wants shown: send ONE of look, meters (1-4) or frame, and keep posting. Shown only if picked under Add-ons. {id, remove:true} withdraws it"},
-{"call":"POST /api/config","body":{"brightness":"0-100","mode":"status|music","music":{"sensitivity":"low|medium|high|auto"},"states":{"<state>":{"colour":"#RRGGBB","colour2":"#RRGGBB or auto","effect":"solid|breathe|fill|flash|chase|rainbow|gradient|waves|scroll|theatre|scanner|meteor|fire|twinkle|sparkle|rain|aurora","speed":"1-100"}},"error":{"minutes":"0-1440: how long an error is shown before the idle look returns; 0 until it clears"},"cool":{"minutes":"0-120","target":"20-60"},"schedule":{"enabled":true,"from":"HH:MM","to":"HH:MM","level":"0-100"},"time":{"tz":"POSIX rule","zone":"label"},"addon":{"show":"<id> or empty","when":"idle|always"},"order":"GRB|RGB|...","reversed":false},"does":"Change any subset of the settings; saved"},
+{"call":"POST /api/config","body":{"brightness":"0-100","mode":"status|music","music":{"sensitivity":"low|medium|high|auto"},"states":{"<state>":{"colour":"#RRGGBB","colour2":"#RRGGBB or auto","effect":"solid|breathe|fill|flash|chase|rainbow|gradient|waves|scroll|theatre|scanner|meteor|fire|twinkle|sparkle|rain|aurora","speed":"1-100"}},"error":{"minutes":"0-1440: how long an error is shown before the idle look returns; 0 until it clears"},"cool":{"minutes":"0-120","target":"20-60"},"schedule":{"enabled":true,"from":"HH:MM","to":"HH:MM","level":"0-100"},"time":{"tz":"POSIX rule","zone":"label"},"addon":{"show":"<id> or empty","when":"idle|always"},"order":"GRB|RGB|...","reversed":false,"glow":"true: unlit LEDs keep a faint glow; false: fully off"},"does":"Change any subset of the settings; saved"},
 {"call":"POST /api/preview","body":{"state":"<state>","progress":"0-100","seconds":"1-120"},"does":"Show a state briefly without it counting as the printer's"},
 {"call":"POST /api/printer","body":{"ip":"...","serial":"...","code":"..."},"does":"Pair with a Bambu printer; {forget:true} unpairs"},
 {"call":"POST /api/printer","body":{"type":"klipper","host":"IP or name.local","port":"7125","key":"Moonraker API key, optional"},"does":"Follow a Klipper printer through Moonraker instead (polled every 2 s)"},
