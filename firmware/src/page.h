@@ -334,48 +334,57 @@ function renderAddons(s){
     tiles.push({id:f.id,name:f.name||(f.loading?'Loading…':'Add-on file'),desc:f.error||f.description,tag:'',
       sub:[f.kind!=='none'?f.kind:'',f.kind==='maintenance'&&f.value!==undefined?(+f.value).toFixed(1)+' of '+f.every+' print hours'+(f.due?' · due now':''):f.value!==undefined?'reads '+Math.round(+f.value*10)/10+(f.unit?' '+f.unit:''):'',f.author?'by '+f.author:''].filter(Boolean).join(' · '),live:posted&&posted.fresh,bad:!!f.error,file:true,maint:f.kind==='maintenance'});
   }
-  for(const a of s.addons){if(f.from&&a.id===f.id)continue;tiles.push({id:a.id,name:a.name,tag:'program',sub:a.kind+' · '+(a.fresh?'posted '+a.age+' s ago':'stopped posting'),live:a.fresh});}
+  /* The others kept on the bar: a tap swaps one in, with nothing to download. */
+  for(const k of (s.library||[])){if(k.active||k.id===f.id)continue;tiles.push({id:k.id,name:k.name,desc:'',tag:'saved',sub:'kept on the bar · switches in without downloading',saved:true});}
+  for(const a of s.addons){if(f.from&&a.id===f.id)continue;if((s.library||[]).some(k=>k.id===a.id&&!k.active))continue;tiles.push({id:a.id,name:a.name,tag:'program',sub:a.kind+' · '+(a.fresh?'posted '+a.age+' s ago':'stopped posting'),live:a.fresh});}
   /* Picked but nothing is running it: replaced by another add-on file, or a program that stopped. Said plainly, with a way out. */
   if(want&&!tiles.some(t=>t.id===want))tiles.push({id:want,name:want,desc:'Picked, but nothing is running it now: it was replaced, or the program that posted it has stopped. Use it again from the store, or clear it.',tag:'not running',bad:true,missing:true});
   const html=tiles.length?tiles.map(t=>'<div class="tile'+(tiles.length===1?' wide':'')+'"'+(t.id&&t.id===want?' data-on':'')+'><div class="body"><div class="t"><i class="dot"'+(t.live?' data-live':'')+(t.bad?' data-bad':'')+'></i><span>'+esc(t.name)+'</span>'+(t.tag?'<em class="tag">'+t.tag+'</em>':'')+'</div>'
     +(t.desc?'<div class="d">'+esc(t.desc)+'</div>':'')+'<div class="sub">'+esc(t.sub||'')+(s.addonShowing&&s.addonShowing===t.id?' · on the bar now':'')+'</div></div>'
-    +'<div class="acts">'+(t.missing?'<button data-pick="">Clear</button>':t.id?(t.id===want?'<button class="go" disabled>Picked</button>':'<button data-pick="'+esc(t.id)+'">Show this</button>'):'')+(t.maint?'<button data-maint="1" title="Start counting the print hours again">Done</button>':'')+(t.file?'<button data-remove="1">Remove</button>':'')+'</div></div>').join('')
+    +'<div class="acts">'+(t.saved?'<button data-use="'+esc(t.id)+'">Show this</button><button data-forget="'+esc(t.id)+'">Remove</button>':t.missing?'<button data-pick="">Clear</button>':t.id?(t.id===want?'<button class="go" disabled>Picked</button>':'<button data-pick="'+esc(t.id)+'">Show this</button>'):'')+(t.maint?'<button data-maint="1" title="Start counting the print hours again">Done</button>':'')+(t.file?'<button data-remove="'+esc(t.id||'')+'">Remove</button>':'')+'</div></div>').join('')
     :'<div class="empty">Nothing yet. Pick one from the store below, or upload a file of your own.</div>';
   if(html!==window.adHtml){window.adHtml=html;$('adtiles').innerHTML=html;}
   $('adnone').hidden=!want;
-  if(window.storeIdx&&s.addonFile.url!==window.storeFor){last=s;drawStore();}
+  if(window.storeIdx&&storeKey(s)!==window.storeFor){last=s;drawStore();}
   const on=tiles.find(t=>t.id&&t.id===want);
   $('adsum').textContent=on?on.name+(s.addonShowing===on.id?' · on the bar now':''):'None picked';
 }
+/* What the store cards depend on: which add-on runs, and which are kept. */
+const storeKey=(s)=>s?(s.addonFile.url||'')+'|'+(s.addonFile.id||'')+'|'+(s.library||[]).map(k=>k.id+(k.active?'*':'')+k.url).join(','):null;
+/* Swaps in an add-on the bar already keeps. */
+async function useKept(id){busy=Date.now();$('admsg').textContent='Switching…';const r=await post('/api/addonfile',{use:id});$('admsg').textContent=r.ok?'':(r.message||'Not switched');}
 $('adtiles').onclick=async(e)=>{const b=e.target.closest('button');if(!b)return;if(b.dataset.pick!==undefined)pick(b.dataset.pick);
+  if(b.dataset.use){useKept(b.dataset.use);return;}
   if(b.dataset.maint){const r=await post('/api/addonfile',{maintenanceDone:true});$('admsg').textContent=r.message||(r.ok?'Done':'Not saved');return;}
-  if(b.dataset.remove){const card=b.closest('.tile'),name=card?card.querySelector('.t span').textContent:'this add-on';
-    ask({title:'Remove '+name+'?',sub:'It comes off the bar. You can add it again from the store any time.',ok:'Remove',
-      act:async()=>{const r=await post('/api/addonfile',{remove:true});if(!r.ok)throw new Error(r.message||'The bar did not remove it');$('admsg').textContent='';}});}};
+  if(b.dataset.remove!==undefined||b.dataset.forget){const card=b.closest('.tile'),name=card?card.querySelector('.t span').textContent:'this add-on',id=b.dataset.forget||b.dataset.remove||'';
+    ask({title:'Remove '+name+'?',sub:'It comes off the bar and frees its slot. You can add it again from the store any time.',ok:'Remove',
+      act:async()=>{const r=await post('/api/addonfile',id?{remove:true,id}:{remove:true});if(!r.ok)throw new Error(r.message||'The bar did not remove it');$('admsg').textContent='';}});}};
 $('adnone').onclick=()=>pick('');
 $('backup').onclick=()=>{location.href='/api/otherslot.bin';};
 $('hostsave').onclick=async()=>{busy=Date.now();const r=await post('/api/hostname',{name:$('hostname').value.trim()});$('hosthint').textContent=r.message||(r.ok?'Saved':'Not saved');};
 $('adup').onclick=()=>$('adfile').click();
 $('adfile').onchange=async()=>{const file=$('adfile').files[0];$('adfile').value='';if(!file)return;let obj;
   try{obj=JSON.parse(await file.text());}catch(e){$('admsg').textContent='That file is not valid JSON';return;}
-  const r=await post('/api/addonfile',{file:obj});$('admsg').textContent=r.ok?'Uploaded. It shows as soon as it has loaded, in place of any add-on file the bar had.':(r.message||'Not accepted');};
+  const r=await post('/api/addonfile',{file:obj});$('admsg').textContent=r.ok?'Uploaded and kept on the bar. It shows as soon as it has loaded.':(r.message||'Not accepted');};
 /* Always shown, so there is nothing to find. Read once when the page opens, and again after an add-on is picked so the card it came from says In use. */
 async function openStore(){
   if(!$('storelist').children.length)$('storenote').textContent='Loading…';
   let idx;try{idx=await fetch(STORE+'index.json',{cache:'no-store'}).then(r=>{if(!r.ok)throw 0;return r.json();});}
   catch(e){$('storenote').textContent='Could not reach the store: it needs internet on this device';$('storelist').innerHTML='';return;}
-  $('storenote').textContent=idx.addons.length+' from GitHub · one at a time';
+  $('storenote').textContent=idx.addons.length+' from GitHub';
   window.storeIdx=idx; loadSims(idx); drawStore();
 }
 /* Drawn again whenever the bar's add-on changes, so the card it came from says In use even when the store was read before the bar first answered. */
 function drawStore(){
   const idx=window.storeIdx;if(!idx)return;
-  window.storeFor=last?last.addonFile.url:null;
-  $('storelist').innerHTML=idx.addons.map(a=>{const url=STORE+a.file,using=last&&last.addonFile.url===url,cols=(a.preview||'').match(/[0-9a-fA-F]{6}/g)||[];
+  window.storeFor=storeKey(last);
+  const kept=(last&&last.library)||[],slots=(last&&last.librarySlots)||0;
+  $('storenote').textContent=idx.addons.length+' from GitHub'+(slots?' · '+kept.length+' of '+slots+' kept on the bar':'');
+  $('storelist').innerHTML=idx.addons.map(a=>{const url=STORE+a.file,saved=kept.find(k=>k.url===url),using=last&&(saved?saved.active:last.addonFile.url===url),cols=(a.preview||'').match(/[0-9a-fA-F]{6}/g)||[];
     return '<div class="tile"'+(using?' data-on':'')+'><div class="t"><span>'+esc(a.name)+'</span><em class="tag">'+esc(a.kind)+'</em></div>'
       +(cols.length===25?'<div class="sw" data-f="'+esc(a.file)+'">'+cols.map(c=>'<i style="background:#'+c+'"></i>').join('')+'</div>':'')
       +'<div class="d">'+esc(a.description)+'</div><div class="sub">'+(a.author?'by '+esc(a.author):'')+'</div>'
-      +'<div class="acts">'+(using?'<button class="go" disabled>In use</button>':'<button data-url="'+esc(url)+'"'+(a.needs?' data-needs="'+esc(a.needs)+'"':'')+'>'+({place:'Use for my town',symbol:'Choose a stock',countdown:'Set the time'}[a.needs]||'Use this')+'</button>')+'</div></div>';}).join('');
+      +'<div class="acts">'+(using?'<button class="go" disabled>In use</button>':saved?'<button data-use="'+esc(saved.id)+'" title="Already on the bar: nothing to download">Show this</button>':'<button data-url="'+esc(url)+'"'+(a.needs?' data-needs="'+esc(a.needs)+'"':'')+'>'+({place:'Use for my town',symbol:'Choose a stock',countdown:'Set the time'}[a.needs]||'Use this')+'</button>')+'</div></div>';}).join('');
 }
 /* Store cards that move the way the bar would. Looks run through a copy of the bar's own effects (the same sums as render() and paintEffect() in the firmware), animations play their frames at their own speed, and live meters fill up to the level in their picture. */
 const SIMS={};
@@ -484,7 +493,7 @@ const fillIn=(text,fill)=>{for(const [k,v] of Object.entries(fill))text=text.spl
 const pad2=(n)=>String(n).padStart(2,'0'),localStamp=(d)=>d.getFullYear()+'-'+pad2(d.getMonth()+1)+'-'+pad2(d.getDate())+'T'+pad2(d.getHours())+':'+pad2(d.getMinutes());
 /* The same, on a clock in the bar's time zone, which is where the bar reads a countdown's times. That need not be this browser's zone: a bar never told its zone keeps UTC, and its countdowns ended hours out (0.7.11). A zone the browser does not know by name is one of the fixed offsets this page offered, which came from the browser's own clock. */
 const barStamp=(d)=>{try{const p={};new Intl.DateTimeFormat('en-CA',{timeZone:last.config.time.zone,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).formatToParts(d).forEach(x=>{p[x.type]=x.value;});return p.year+'-'+p.month+'-'+p.day+'T'+p.hour+':'+p.minute;}catch(e){return localStamp(d);}};
-$('storelist').onclick=(e)=>{const b=e.target.closest('button');if(!b||!b.dataset.url)return;
+$('storelist').onclick=(e)=>{const b=e.target.closest('button');if(b&&b.dataset.use){useKept(b.dataset.use);return;}if(!b||!b.dataset.url)return;
   const url=b.dataset.url,card=b.closest('.tile'),name=card?card.querySelector('.t span').textContent:'Add-on';
   /* A place (weather, air): the town is found with Open-Meteo's free place search, and only its coordinates go to the bar. */
   if(b.dataset.needs==='place')return ask({title:name,sub:'Which town or suburb is the bar in?',fields:[{id:'town',label:'Town or suburb',placeholder:'e.g. Geelong'}],

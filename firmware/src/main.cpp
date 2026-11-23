@@ -45,13 +45,15 @@
 #include <mbedtls/sha256.h>
 #include <StreamString.h>
 #include <esp_timer.h>
+#include <esp_partition.h>
+#include <esp_rom_crc.h>
 #include <PubSubClient.h>
 #include "page.h"
 #include "roots.h"
 
 /* What the firmware calls itself on its page and in /api/status. Plain and generic, so it says what it is on anyone's network. */
 #define FW_NAME "panda"
-#define FW_VERSION "0.7.17"
+#define FW_VERSION "0.7.18"
 /* Where new releases and the add-on store live. A release must carry a
    panda-<board>-custom-<version>.bin for each board and a SHA256SUMS.txt that lists them. */
 #define UPDATE_REPO "ImSammyTTV/Panda-State"
@@ -3260,6 +3262,141 @@ static const char *faCheck(const String &text) {
   return nullptr;
 }
 
+/**
+ * The add-on library: up to LIB_SLOTS add-on files kept on the bar, so
+ * switching between them needs no download (0.7.18). One of them runs at a
+ * time, as before; the others wait.
+ *
+ * The settings store is 12 KB shared with stock, far too small for several
+ * files, so they are kept at the top of the "coredump" partition instead
+ * (64 KB, in every BTT image's table). A crash report is written from the
+ * bottom of that partition and only as far as it needs, which is well short
+ * of the top 24 KB used here; each slot carries a checksum, so one that a
+ * crash report did reach is read as empty rather than as a broken file.
+ *
+ * Each slot is one 4 KB flash sector: a header, the address it came from (if
+ * any), then the file.
+ */
+static const int LIB_SLOTS = 6;
+static const uint32_t LIB_SECTOR = 4096, LIB_MAGIC = 0x4C415350;   // "PSAL"
+struct LibHead { uint32_t magic, crc; uint16_t len, urlLen; char id[16]; char name[28]; };
+struct LibEntry { bool used; char id[16]; char name[28]; String url; uint16_t len; };
+static LibEntry lib[LIB_SLOTS];
+static const esp_partition_t *libPart = nullptr;
+static SemaphoreHandle_t libLock;
+static char libActive[16] = "";   // the slot that runs, by id (kept in the settings as "falib"); empty when none does
+
+static uint32_t libOffset(int slot) { return libPart->size - (uint32_t)(LIB_SLOTS - slot) * LIB_SECTOR; }
+
+static uint32_t libCrc(const LibHead &h, const char *url, const char *text) {
+  uint32_t crc = esp_rom_crc32_le(0, (const uint8_t *)h.id, sizeof h.id + sizeof h.name);
+  crc = esp_rom_crc32_le(crc, (const uint8_t *)url, h.urlLen);
+  return esp_rom_crc32_le(crc, (const uint8_t *)text, h.len);
+}
+
+/* Reads what each slot holds, once at start. A slot is used only if its checksum is right. */
+static void libBegin() {
+  libLock = xSemaphoreCreateMutex();
+  libPart = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_COREDUMP, nullptr);
+  if (!libPart || libPart->size < LIB_SLOTS * LIB_SECTOR * 2) { libPart = nullptr; logLine("Add-on library: no room on this bar's flash"); return; }
+  std::unique_ptr<char[]> buf(new char[LIB_SECTOR]);
+  int count = 0;
+  for (int i = 0; i < LIB_SLOTS; i++) {
+    lib[i].used = false;
+    if (esp_partition_read(libPart, libOffset(i), buf.get(), LIB_SECTOR) != ESP_OK) continue;
+    LibHead h;
+    memcpy(&h, buf.get(), sizeof h);
+    if (h.magic != LIB_MAGIC || sizeof h + h.urlLen + h.len > LIB_SECTOR || !h.len) continue;
+    const char *url = buf.get() + sizeof h, *text = url + h.urlLen;
+    if (libCrc(h, url, text) != h.crc) continue;
+    lib[i].used = true;
+    memcpy(lib[i].id, h.id, sizeof h.id); lib[i].id[sizeof lib[i].id - 1] = 0;
+    memcpy(lib[i].name, h.name, sizeof h.name); lib[i].name[sizeof lib[i].name - 1] = 0;
+    lib[i].url = "";
+    lib[i].url.reserve(h.urlLen);
+    for (int c = 0; c < h.urlLen; c++) lib[i].url += url[c];
+    lib[i].len = h.len;
+    count++;
+  }
+  logLine("Add-on library: %d of %d slots in use", count, LIB_SLOTS);
+}
+
+static int libFind(const char *id) {
+  for (int i = 0; i < LIB_SLOTS; i++) if (lib[i].used && !strcmp(lib[i].id, id)) return i;
+  return -1;
+}
+
+/* A slot's file, or an empty string. */
+static String libText(int slot) {
+  String text;
+  if (!libPart || slot < 0 || slot >= LIB_SLOTS) return text;
+  xSemaphoreTake(libLock, portMAX_DELAY);
+  if (lib[slot].used) {
+    const uint16_t urlLen = lib[slot].url.length(), len = lib[slot].len;
+    std::unique_ptr<char[]> buf(new char[len + 1]);
+    if (esp_partition_read(libPart, libOffset(slot) + sizeof(LibHead) + urlLen, buf.get(), len) == ESP_OK) { buf[len] = 0; text = buf.get(); }
+  }
+  xSemaphoreGive(libLock);
+  return text;
+}
+
+/* Keeps a checked file: in the slot of the same id if there is one (an add-on added again replaces its old copy), else in an empty one.
+   Returns why not, or nullptr. */
+static const char *libSave(const String &text, const String &url, char *idOut = nullptr) {
+  if (!libPart) return "This bar has nowhere to keep add-ons";
+  if (sizeof(LibHead) + url.length() + text.length() > LIB_SECTOR) return "The add-on file is too big to keep on the bar (about 3,900 characters at most)";
+  JsonDocument filter;
+  filter["id"] = true;
+  filter["name"] = true;
+  JsonDocument doc;
+  if (deserializeJson(doc, text, DeserializationOption::Filter(filter))) return "The add-on file is not valid JSON";
+  LibHead h = {};
+  h.magic = LIB_MAGIC;
+  strlcpy(h.id, doc["id"] | "", sizeof h.id);
+  strlcpy(h.name, doc["name"] | h.id, sizeof h.name);
+  h.len = text.length();
+  h.urlLen = url.length();
+  h.crc = libCrc(h, url.c_str(), text.c_str());
+  xSemaphoreTake(libLock, portMAX_DELAY);
+  int slot = libFind(h.id);
+  for (int i = 0; i < LIB_SLOTS && slot < 0; i++) if (!lib[i].used) slot = i;
+  if (slot < 0) { xSemaphoreGive(libLock); return "All 6 add-on slots on the bar are full: remove one under Add-ons first"; }
+  std::unique_ptr<char[]> buf(new char[LIB_SECTOR]);
+  memset(buf.get(), 0xFF, LIB_SECTOR);
+  memcpy(buf.get(), &h, sizeof h);
+  memcpy(buf.get() + sizeof h, url.c_str(), h.urlLen);
+  memcpy(buf.get() + sizeof h + h.urlLen, text.c_str(), h.len);
+  const uint32_t at = libOffset(slot);
+  bool ok = esp_partition_erase_range(libPart, at, LIB_SECTOR) == ESP_OK && esp_partition_write(libPart, at, buf.get(), LIB_SECTOR) == ESP_OK;
+  if (ok) {
+    /* Read back: a write that did not take is said now, not found at the next start. */
+    std::unique_ptr<char[]> check(new char[LIB_SECTOR]);
+    ok = esp_partition_read(libPart, at, check.get(), LIB_SECTOR) == ESP_OK && !memcmp(check.get(), buf.get(), LIB_SECTOR);
+  }
+  if (ok) {
+    lib[slot].used = true;
+    strlcpy(lib[slot].id, h.id, sizeof lib[slot].id);
+    strlcpy(lib[slot].name, h.name, sizeof lib[slot].name);
+    lib[slot].url = url;
+    lib[slot].len = h.len;
+  } else lib[slot].used = false;
+  xSemaphoreGive(libLock);
+  if (!ok) return "The bar could not write the add-on to its flash";
+  logLine("Add-on library: %s kept in slot %d", h.id, slot + 1);
+  if (idOut) strlcpy(idOut, h.id, sizeof h.id);
+  return nullptr;
+}
+
+static void libRemove(int slot) {
+  if (!libPart || slot < 0 || slot >= LIB_SLOTS) return;
+  xSemaphoreTake(libLock, portMAX_DELAY);
+  esp_partition_erase_range(libPart, libOffset(slot), LIB_SECTOR);
+  logLine("Add-on library: %s removed from slot %d", lib[slot].id, slot + 1);
+  lib[slot].used = false;
+  lib[slot].url = "";
+  xSemaphoreGive(libLock);
+}
+
 /* Paths like "data.0.price": numbers index arrays, anything else names a key. */
 static void pathFilter(JsonDocument &filter, const String &path) {
   JsonVariant cursor = filter.as<JsonVariant>();
@@ -3351,15 +3488,23 @@ static void faRemove() {
 static void faTick() {
   if (faReload) {
     faReload = false;   // before the address is read, so one stored meanwhile sets it again; put back below while this one still has to wait
-    const String url = prefs.getString("faurl", "");
+    /* The library first: a kept file loads straight from flash, with nothing to fetch. */
+    xSemaphoreTake(libLock, portMAX_DELAY);
+    const int slot = libActive[0] ? libFind(libActive) : -1;
+    const String url = slot >= 0 ? lib[slot].url : prefs.getString("faurl", "");
+    xSemaphoreGive(libLock);
+    const bool fetch = slot < 0 && url.length() && !faInline.length();
     /* Nothing is taken down until the new one can actually be fetched. */
-    if (url.length() && WiFi.status() != WL_CONNECTED) { faReload = true; faError = "Waiting for Wi-Fi to fetch it"; return; }
+    if (fetch && WiFi.status() != WL_CONNECTED) { faReload = true; faError = "Waiting for Wi-Fi to fetch it"; return; }
     /* A certificate is checked against today's date, which the bar only has once it has asked the internet: before that every HTTPS fetch fails with a certificate error (seen right after each restart, 0.6.3). */
-    if (url.length() && !timeKnown()) { faReload = true; faError = ""; return; }
+    if (fetch && !timeKnown()) { faReload = true; faError = ""; return; }
     faRemove();
     faUrl = url;
     String text;
-    if (!faUrl.length()) {
+    if (slot >= 0) {
+      text = libText(slot);
+      if (!text.length()) { faError = "The bar could not read this add-on back from its flash: add it again"; faPick = false; return; }
+    } else if (!faUrl.length()) {
       const size_t size = prefs.getBytesLength("fajson");
       if (size && size <= FA_MAX_UPLOAD) {
         std::unique_ptr<char[]> buf(new char[size + 1]);
@@ -3371,8 +3516,8 @@ static void faTick() {
     /* The page already downloaded the file to show it in the store, and hands it over with its address: used as it is, it loads at once instead of
        the bar fetching it again from GitHub (11-12 s on the P2, most of it the secure connection juggling memory with the printer's). The address is
        still kept, and the bar fetches from it at its next start. */
-    if (faUrl.length() && faInline.length()) { text = faInline; faInline = ""; }
-    else if (faUrl.length()) {
+    if (slot < 0 && faUrl.length() && faInline.length()) { text = faInline; faInline = ""; }
+    else if (slot < 0 && faUrl.length()) {
       Fetch f;
       const int code = f.begin(faUrl);
       if (code != 200) {
@@ -3393,9 +3538,24 @@ static void faTick() {
       if (got < 0) { faReload = true; faError = "Fetching it: " + f.error(got) + ". Trying again in a minute."; faRetryAt = millis() + 60000; return; }
       faFails = 0;
     }
-    if (!text.length()) { faPick = false; return; }
+    if (!text.length()) {
+      /* Down as running, but its slot is gone (a crash report reached it): said, rather than the add-on just vanishing. */
+      if (libActive[0]) faError = "This add-on is no longer kept on the bar: add it again from the store";
+      faPick = false;
+      return;
+    }
     if (const char *bad = faLoad(text)) { faError = bad; faKind = FA_NONE; faPick = false; return; }
     faError = "";
+    /* One fetched from its address, or kept the old way from before the library (0.7.17 and earlier): into the library now, so it is never fetched again and frees its room in the settings. One too big for a slot, or with every slot taken, carries on the old way. */
+    if (slot < 0) {
+      char id[16];
+      if (!libSave(text, faUrl, id)) {
+        strlcpy(libActive, id, sizeof libActive);
+        prefs.putString("falib", libActive);
+        prefs.remove("faurl");
+        prefs.remove("fajson");
+      }
+    }
     if (faPick) {
       faPick = false;
       strlcpy(addonShow, faId, sizeof addonShow);
@@ -3633,7 +3793,7 @@ static void onlineTask(void *) {
 static void onlineToJson(JsonDocument &doc) {
   /* The file add-on, if there is one: where it came from and how it is doing. */
   JsonObject file = doc["addonFile"].to<JsonObject>();
-  file["from"] = faUrl.length() ? "store" : prefs.isKey("fajson") ? "upload" : "";
+  file["from"] = faUrl.length() ? "store" : libActive[0] || prefs.isKey("fajson") ? "upload" : "";
   file["url"] = faUrl;
   file["id"] = faId;
   file["name"] = faName;
@@ -3646,6 +3806,21 @@ static void onlineToJson(JsonDocument &doc) {
   if (faKind == FA_PRINTER || faKind == FA_MAINT) file["unit"] = faUnit;
   if (faKind == FA_MAINT) { file["every"] = faMaintHours; file["task"] = faTask; file["due"] = !isnan(faValue) && faValue >= faMaintHours; }
   if (faKind == FA_COUNTDOWN && timeKnown()) file["endsIn"] = (long)(faCdTo - time(nullptr));
+  /* Every add-on kept on the bar, the running one among them. */
+  JsonArray kept = doc["library"].to<JsonArray>();
+  if (libPart) {
+    xSemaphoreTake(libLock, portMAX_DELAY);
+    for (int i = 0; i < LIB_SLOTS; i++) {
+      if (!lib[i].used) continue;
+      JsonObject one = kept.add<JsonObject>();
+      one["id"] = lib[i].id;
+      one["name"] = lib[i].name;
+      one["url"] = lib[i].url;
+      one["active"] = !strcmp(lib[i].id, libActive);
+    }
+    xSemaphoreGive(libLock);
+  }
+  doc["librarySlots"] = libPart ? LIB_SLOTS : 0;
 
   /* Updates from GitHub. */
   JsonObject upd = doc["update"].to<JsonObject>();
@@ -3692,12 +3867,38 @@ static void handleAddonFile() {
     return sendResult(true, "Done: the count starts again");
   }
   if (doc["remove"].as<bool>()) {
+    /* With an id, that kept add-on; without one, the one running (as before the library). */
+    const char *id = doc["id"] | "";
+    const bool running = !*id || !strcmp(id, libActive) || !strcmp(id, faId);
+    if (*id) {
+      const int slot = libFind(id);
+      if (slot < 0 && !running) return sendResult(false, "The bar does not have that add-on");
+      libRemove(slot);
+    } else libRemove(libActive[0] ? libFind(libActive) : -1);
+    if (!running) return sendResult(true, "Removed");
+    libActive[0] = 0;
+    prefs.remove("falib");
     prefs.remove("faurl");
     prefs.remove("fajson");
     if (faId[0] && strcmp(addonShow, faId) == 0) { addonShow[0] = 0; saveConfig(); }
     faReload = true;
     faRetryAt = millis();
     return sendResult(true, "Removed");
+  }
+  /* Switching to an add-on the bar already keeps: nothing is downloaded. */
+  if (!doc["use"].isNull()) {
+    const char *id = doc["use"] | "";
+    if (libFind(id) < 0) return sendResult(false, "The bar does not have that add-on: add it from the store");
+    strlcpy(libActive, id, sizeof libActive);
+    prefs.putString("falib", libActive);
+    prefs.remove("faurl");
+    prefs.remove("fajson");
+    faInline = "";
+    faPick = true;
+    faFails = 0;
+    faReload = true;
+    faRetryAt = millis();
+    return sendResult(true, "Loading");
   }
   if (!doc["url"].isNull()) {
     const String url = doc["url"] | "";
@@ -3708,29 +3909,38 @@ static void handleAddonFile() {
       serializeJson(doc["file"], text);
       if (const char *bad = faCheck(text)) return sendResult(false, bad);
     }
-    prefs.putString("faurl", url);
-    prefs.remove("fajson");
     faInline = "";
-    if (!doc["file"].isNull()) {
-      String text;
-      serializeJson(doc["file"], text);
+    String text;
+    if (!doc["file"].isNull()) serializeJson(doc["file"], text);
+    char id[16];
+    /* The copy the page handed over goes straight into the library. One too big for a slot, or sent without a copy, is fetched by the bar from its address, and kept once it has it. */
+    if (text.length() && sizeof(LibHead) + url.length() + text.length() <= LIB_SECTOR && libPart) {
+      if (const char *bad = libSave(text, url, id)) return sendResult(false, bad);
+      strlcpy(libActive, id, sizeof libActive);
+      prefs.putString("falib", libActive);
+      prefs.remove("faurl");
+    } else {
+      libActive[0] = 0;
+      prefs.remove("falib");
+      prefs.putString("faurl", url);
       if (text.length() <= FA_MAX_FETCH) faInline = text;  // too big: the bar fetches it itself, as before
     }
+    prefs.remove("fajson");
   } else if (!doc["file"].isNull()) {
     String text;
     serializeJson(doc["file"], text);
     if (text.length() > FA_MAX_UPLOAD) return sendResult(false, "The file is over 4,000 characters; host it and use its address instead");
     /* Checked in full before it is kept, so a broken file never replaces a working one. */
     if (const char *bad = faCheck(text)) return sendResult(false, bad);
-    /* Kept as bytes, not a string: a string must fit in one page of the
-       settings store, and a 1.8 KB animation did not (measured, 0.5.9). */
-    /* A write the store refuses leaves what it held before, so the add-on that was there carries on; removing it here took that one away too (0.7.13). */
-    if (prefs.putBytes("fajson", text.c_str(), text.length()) != text.length()) {
-      return sendResult(false, "The bar has no room left to keep this file; host it and use its address instead");
-    }
+    /* Into the library; a write that fails leaves the add-on that was running carrying on. */
+    char id[16];
+    if (const char *bad = libSave(text, "", id)) return sendResult(false, bad);
+    strlcpy(libActive, id, sizeof libActive);
+    prefs.putString("falib", libActive);
     prefs.remove("faurl");
+    prefs.remove("fajson");
   } else {
-    return sendResult(false, "Send url, file or remove");
+    return sendResult(false, "Send url, file, use or remove");
   }
   faPick = true;
   faFails = 0;
@@ -4108,6 +4318,8 @@ void setup() {
 
   prLock = xSemaphoreCreateMutex();
   addonLock = xSemaphoreCreateMutex();
+  libBegin();
+  strlcpy(libActive, prefs.getString("falib", "").c_str(), sizeof libActive);
   cfgLock = xSemaphoreCreateMutex();
   updAuto = prefs.getBool("updauto", true);
   if (prefs.isKey("filcol")) { filLast.tray = -2; filLast.colour = prefs.getUInt("filcol", 0); strlcpy(filLast.type, prefs.getString("filtype", "").c_str(), sizeof filLast.type); }
