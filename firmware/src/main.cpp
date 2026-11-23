@@ -53,7 +53,7 @@
 
 /* What the firmware calls itself on its page and in /api/status. Plain and generic, so it says what it is on anyone's network. */
 #define FW_NAME "panda"
-#define FW_VERSION "0.7.24"
+#define FW_VERSION "0.7.25"
 /* Where new releases and the add-on store live. A release must carry a
    panda-<board>-custom-<version>.bin for each board and a SHA256SUMS.txt that lists them. */
 #define UPDATE_REPO "ImSammyTTV/Panda-State"
@@ -278,6 +278,8 @@ static char order[4] = "GRB";
 static bool reversed = false;
 /* Whether the LEDs an effect leaves unlit (past a fill's edge, a breath's low point, a flash's off half) keep a faint glow, or go fully dark. */
 static bool glow = true;
+/* After a print, back to idle as soon as the printer's door is opened (printers with a door sensor): the print has been seen to, whatever the cool-down says. */
+static bool doorEndsFinish = false;
 /* The cool-down the bar works out for itself when paired: "ready" only once this many minutes have passed AND the bed is at or below the target. A controller that pushes states makes its own decision and ignores these. */
 static uint8_t coolMinutes = 10;
 static uint8_t coolTarget = 35;
@@ -385,6 +387,7 @@ static void configToJson(JsonDocument &doc) {
   doc["order"] = order;
   doc["reversed"] = reversed;
   doc["glow"] = glow;
+  doc["doorEndsFinish"] = doorEndsFinish;
 #if defined(BOARD_STATUS)
   doc["stripLength"] = stripLength;
 #elif defined(BOARD_RGB)
@@ -426,6 +429,7 @@ static const char *applyConfig(JsonVariantConst doc) {
   }
   if (!doc["reversed"].isNull()) reversed = doc["reversed"].as<bool>();
   if (!doc["glow"].isNull()) glow = doc["glow"].as<bool>();
+  if (!doc["doorEndsFinish"].isNull()) doorEndsFinish = doc["doorEndsFinish"].as<bool>();
 #if defined(BOARD_STATUS)
   if (!doc["stripLength"].isNull()) {
     int value;
@@ -676,6 +680,8 @@ static struct {
   int timeLeft; float nozzle, nozzleTarget, bedTarget, chamber;
   bool gotTimeLeft, gotNozzle, gotNozzleTarget, gotBedTarget, gotChamber;
   int stage; bool gotStage;   // 0.7.19: print.stg_cur, what the printer is doing (levelling, heating the bed...)
+  int layer; bool gotLayer;   // 0.7.25: print.layer_num, 0 until the first layer starts
+  uint32_t stat; bool gotStat; long long homeFlag; bool gotHomeFlag;   // 0.7.25: where printers with a door sensor say whether the door is open
 } scan;
 
 /* What the printer has said about its filament, kept between messages: printers send only what changed. */
@@ -720,6 +726,8 @@ static void amsRemember(int id, int level, int raw) {
 static volatile int prTimeLeft = -1;                  // minutes left on the print, -1 not known
 /* Bambu: the stage the printer says it is at (print.stg_cur), -1 not known. Klipper: 1 while a print has started but not yet extruded (print_duration still 0), else 0. */
 static volatile int prStage = -1;
+static volatile int prLayer = -1;    // the layer the print is on, -1 not known
+static volatile int8_t prDoor = -1;  // 1 the printer's door is open, 0 shut, -1 not known (no sensor, or not said yet)
 static volatile float prNozzle = NAN, prNozzleTarget = NAN, prBedTarget = NAN, prChamber = NAN;
 
 /* "F72323FF" is colour then alpha; an alpha of 00 (or no colour) is an empty tray. */
@@ -751,6 +759,9 @@ static void scanFinish() {
   else if (!strcmp(p1, "print") && !strcmp(k, "bed_target_temper")) { scan.bedTarget = atof(v); scan.gotBedTarget = true; }
   else if (!strcmp(p1, "print") && !strcmp(k, "chamber_temper")) { scan.chamber = atof(v); scan.gotChamber = true; }
   else if (!strcmp(p1, "print") && !strcmp(k, "stg_cur")) { scan.stage = atoi(v); scan.gotStage = true; }
+  else if (!strcmp(p1, "print") && !strcmp(k, "layer_num")) { scan.layer = atoi(v); scan.gotLayer = true; }
+  else if (!strcmp(p1, "print") && !strcmp(k, "stat")) { scan.stat = strtoul(v, nullptr, 16); scan.gotStat = true; }
+  else if (!strcmp(p1, "print") && !strcmp(k, "home_flag")) { scan.homeFlag = strtoll(v, nullptr, 10); scan.gotHomeFlag = true; }
   else if (!strcmp(k, "tray_now") && !strcmp(p1, "ams")) { scan.trayNow = atoi(v); scan.gotTrayNow = true; }
   else if (!strcmp(k, "state") && !strcmp(p1, "extruder")) { scan.extState = atoi(v); scan.gotExtState = true; }
   /* A tray: inside ams.ams[].tray[], or an external spool (vt_tray, or vir_slot[] on dual-nozzle printers). */
@@ -876,6 +887,10 @@ static void scanCommit() {
   if (scan.gotBedTarget) prBedTarget = scan.bedTarget;
   if (scan.gotChamber) prChamber = scan.chamber;
   if (scan.gotStage) prStage = scan.stage;
+  if (scan.gotLayer) prLayer = scan.layer;
+  /* The door: bit 23 of print.stat where the printer sends it, else of print.home_flag. */
+  if (scan.gotStat) prDoor = (scan.stat >> 23) & 1;
+  else if (scan.gotHomeFlag) prDoor = (scan.homeFlag >> 23) & 1;
   prLastMsgAt = millis();
 }
 
@@ -1031,7 +1046,7 @@ static void printerTask(void *) {
       prGcode[0] = 0; prPercent = -1; prBed = NAN; prLastMsgAt = 0;
       filTrayCount = 0; prTrayNow = -1; prActiveExt = 0;
       prSnow[0] = prSnow[1] = -1; prSnowSeen = false;
-      amsCount = 0; prTimeLeft = -1; prNozzle = prNozzleTarget = prBedTarget = prChamber = NAN; prStage = -1;
+      amsCount = 0; prTimeLeft = -1; prNozzle = prNozzleTarget = prBedTarget = prChamber = NAN; prStage = -1; prLayer = -1; prDoor = -1;
     }
     /* Acknowledged here too: the link is already down, and a download that asks for it to be let go would otherwise wait out its whole patience. */
     if (prPaused) { prConnected = false; prHoldAck = true; prSetError("Paused while a firmware update downloads"); prWait(1000); continue; }
@@ -1160,8 +1175,29 @@ static char lastGcode[12] = "";
 static bool gcodeIs(const char *what) { return strcmp(prGcode, what) == 0; }
 static bool printerFresh() { return prConnected && prLastMsgAt && millis() - prLastMsgAt < PRINTER_STALE_MS; }
 
+/* Preparing, held steady: once a print is getting ready it stays so until the first layer starts. Between one step and the next (loading and purging filament, camera calibration, part way through vibration compensation) the printer's stage number passes through others, and the bar flicked between preparing and printing (0.7.24, on an X2D). */
+static bool prepHeld = false;
+static uint32_t prepQuietSince = 0;     // when the stage last stopped looking like preparation; 0 while it does
+static bool doorOpenedAfter = false;    // the door has been opened since the print finished
+static int8_t lastDoor = -1;
+static bool printerPreparing();
+
 static void trackPrinter() {
   if (!printerFresh()) return;
+  /* The door, said in the log when it changes, so whether a printer reports it can be seen in a report. */
+  const int8_t door = prDoor;
+  if (door != lastDoor && door >= 0 && lastDoor >= 0) logLine("Printer: door %s", door ? "opened" : "shut");
+  if (door == 1 && lastDoor == 0 && gcodeIs("FINISH")) doorOpenedAfter = true;
+  if (door >= 0) lastDoor = door;
+  if (!gcodeIs("FINISH")) doorOpenedAfter = false;
+  /* Preparing starts on a preparation stage and ends when a layer starts, progress passes 1%, the print stops, or no preparation stage has been seen for 45 s. */
+  const bool running = gcodeIs("RUNNING") || gcodeIs("PREPARE");
+  if (!running || prPercent > 1 || prLayer >= 1) { prepHeld = false; prepQuietSince = 0; }
+  else if (printerPreparing()) { prepHeld = true; prepQuietSince = 0; }
+  else if (prepHeld) {
+    if (!prepQuietSince) prepQuietSince = millis() | 1;
+    else if (millis() - prepQuietSince > 45000) prepHeld = false;
+  }
   const bool wasBusy = !strcmp(lastGcode, "RUNNING") || !strcmp(lastGcode, "PAUSE") || !strcmp(lastGcode, "PREPARE");
   if (gcodeIs("FINISH")) {
     if (!finishSeenAt) finishSeenAt = millis() | 1;
@@ -1179,7 +1215,7 @@ static void trackPrinter() {
 static bool printerPreparing() {
   const int st = prStage;
   if (prKind == PR_KLIPPER) return st == 1;
-  if (prPercent > 1) return false;
+  if (prPercent > 1 || prLayer >= 1) return false;
   switch (st) {
     case 1:  // auto bed levelling
     case 2:  // heating the bed
@@ -1195,6 +1231,9 @@ static bool printerPreparing() {
     case 18: // calibrating the micro lidar
     case 19: // calibrating extrusion flow
     case 25: // calibrating motor noise
+    case 4:  // changing filament (loading and purging before the first layer; later in a print, progress or the layer rules it out)
+    case 22: // unloading filament
+    case 24: // loading filament
       return true;
     default:
       return false;
@@ -1204,10 +1243,11 @@ static bool printerPreparing() {
 static State printerState(float &fill) {
   fill = prPercent < 0 ? 0 : prPercent;
   if (gcodeIs("PAUSE")) return ST_PAUSED;
-  if (gcodeIs("PREPARE") || gcodeIs("SLICING") || (gcodeIs("RUNNING") && printerPreparing())) return ST_PREPARING;
+  if (gcodeIs("PREPARE") || gcodeIs("SLICING") || (gcodeIs("RUNNING") && (prepHeld || printerPreparing()))) return ST_PREPARING;
   if (gcodeIs("RUNNING")) return ST_PRINTING;
   if (gcodeIs("FAILED")) return ST_ERROR;
   if (!gcodeIs("FINISH")) return ST_IDLE;
+  if (doorEndsFinish && doorOpenedAfter) { fill = 0; return ST_IDLE; }   // the print has been seen to
   /* Finished. Both halves of the cool-down as "how much is left"; the bar drains with whichever has further to go. If the bar started up after the print ended it does not know when that was, so only the bed can speak. */
   const float timeLeft = finishedAt && coolMinutes ? max(0.0f, 1.0f - (millis() - finishedAt) / (coolMinutes * 60000.0f)) : 0;
   float bedLeft = 0;
