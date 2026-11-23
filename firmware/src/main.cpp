@@ -53,7 +53,7 @@
 
 /* What the firmware calls itself on its page and in /api/status. Plain and generic, so it says what it is on anyone's network. */
 #define FW_NAME "panda"
-#define FW_VERSION "0.7.21"
+#define FW_VERSION "0.7.22"
 /* Where new releases and the add-on store live. A release must carry a
    panda-<board>-custom-<version>.bin for each board and a SHA256SUMS.txt that lists them. */
 #define UPDATE_REPO "ImSammyTTV/Panda-State"
@@ -1423,6 +1423,11 @@ static char addonShow[16] = "";                 // the add-on the owner picked; 
 enum AddonWhen : uint8_t { WHEN_IDLE, WHEN_ALWAYS, WHEN_COUNT };
 static const char *WHEN_NAMES[WHEN_COUNT] = {"idle", "always"};
 static uint8_t addonWhen = WHEN_IDLE;
+/* Taking turns (0.7.22): kept add-ons the bar moves between, each shown for addonEvery seconds. Two or more to take turns. */
+static const int ROTATE_MAX = 6;
+static char addonRotate[ROTATE_MAX][16];
+static uint8_t rotateCount = 0;
+static uint16_t addonEvery = 20;
 
 static bool addonFresh(const Addon &a) { return a.used && millis() - a.at < a.ttlMs; }
 
@@ -1450,6 +1455,9 @@ static void extraConfigToJson(JsonDocument &doc) {
   doc["time"]["zone"] = timeZone;
   doc["addon"]["show"] = addonShow;
   doc["addon"]["when"] = WHEN_NAMES[addonWhen];
+  JsonArray turns = doc["addon"]["rotate"].to<JsonArray>();
+  for (int i = 0; i < rotateCount; i++) turns.add(addonRotate[i]);
+  doc["addon"]["every"] = addonEvery;
 }
 
 static const char *applyExtraConfig(JsonVariantConst doc) {
@@ -1481,6 +1489,22 @@ static const char *applyExtraConfig(JsonVariantConst doc) {
     int at = findName(WHEN_NAMES, WHEN_COUNT, doc["addon"]["when"].as<const char *>());
     if (at < 0) return "When is idle or always";
     addonWhen = at;
+  }
+  if (!doc["addon"]["every"].isNull()) {
+    int value;
+    if (!intIn(doc["addon"]["every"], 5, 3600, value)) return "Each add-on is shown for 5-3600 seconds at a time";
+    addonEvery = value;
+  }
+  if (!doc["addon"]["rotate"].isNull()) {
+    JsonArrayConst list = doc["addon"]["rotate"].as<JsonArrayConst>();
+    if (list.isNull() || list.size() > ROTATE_MAX) return "rotate is a list of up to 6 add-on ids";
+    uint8_t n = 0;
+    for (JsonVariantConst one : list) {
+      const char *id = one.as<const char *>();
+      if (!id || !*id || strlen(id) >= sizeof addonRotate[0]) return "rotate is a list of add-on ids";
+      strlcpy(addonRotate[n++], id, sizeof addonRotate[0]);
+    }
+    rotateCount = n;
   }
   return nullptr;
 }
@@ -3242,6 +3266,10 @@ static const int FA_MAX_FRAMES = 30;
 static const size_t FA_MAX_UPLOAD = 4000;         // what fits comfortably in the settings store
 static const size_t FA_MAX_FETCH = 12000;
 static volatile bool faReload = true;
+static bool faRotate = false;                    // loading the next add-on in turn: shown at once, without a save to the settings
+/* A live meter's last reading, kept when it makes way for the next one in turn, so taking turns does not fetch from the internet each time. */
+struct FaReading { char id[16]; float value; uint32_t at; };
+static FaReading faReadings[6];
 static bool faPick = false;                      // show it as soon as it loads (it was just installed)
 static uint8_t faKind = FA_NONE;
 static char faId[16] = "", faName[28] = "", faAuthor[40] = "";
@@ -3463,7 +3491,13 @@ static uint32_t libCrc(const LibHead &h, const char *url, const char *text) {
 static void libBegin() {
   libLock = xSemaphoreCreateMutex();
   libPart = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_COREDUMP, nullptr);
-  if (!libPart || libPart->size < LIB_SLOTS * LIB_SECTOR * 2) { libPart = nullptr; logLine("Add-on library: no room on this bar's flash"); return; }
+  if (!libPart) libPart = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_ANY, "coredump");
+  if (!libPart) { logLine("Add-on library: this bar's partition table has no coredump partition, so add-ons are not kept"); return; }
+  if (libPart->size < LIB_SLOTS * LIB_SECTOR * 2) {
+    logLine("Add-on library: the coredump partition is %u KB, too small to keep add-ons", (unsigned)(libPart->size / 1024));
+    libPart = nullptr;
+    return;
+  }
   std::unique_ptr<char[]> buf(new char[LIB_SECTOR]);
   int count = 0;
   for (int i = 0; i < LIB_SLOTS; i++) {
@@ -3638,6 +3672,13 @@ static bool faFetchValue(float &out) {
 }
 
 static void faRemove() {
+  if (faKind == FA_SOURCE && faId[0] && !isnan(faValue)) {
+    int at = 0;
+    for (int i = 0; i < 6; i++) { if (!strcmp(faReadings[i].id, faId)) { at = i; break; } if (faReadings[i].at < faReadings[at].at) at = i; }
+    strlcpy(faReadings[at].id, faId, sizeof faReadings[at].id);
+    faReadings[at].value = faValue;
+    faReadings[at].at = faFetchedAt;
+  }
   if (faId[0]) {
     JsonDocument gone;
     gone["id"] = faId;
@@ -3711,6 +3752,9 @@ static void faTick() {
     }
     if (const char *bad = faLoad(text)) { faError = bad; faKind = FA_NONE; faPick = false; return; }
     faError = "";
+    if (faKind == FA_SOURCE)
+      for (const FaReading &one : faReadings)
+        if (one.id[0] && !strcmp(one.id, faId) && millis() - one.at < faEveryMs) { faValue = one.value; faFetchedAt = faTriedAt = one.at; }
     /* One fetched from its address, or kept the old way from before the library (0.7.17 and earlier): into the library now, so it is never fetched again and frees its room in the settings. One too big for a slot, or with every slot taken, carries on the old way. */
     if (slot < 0) {
       char id[16];
@@ -3725,7 +3769,8 @@ static void faTick() {
       faPick = false;
       strlcpy(addonShow, faId, sizeof addonShow);
       saveConfig();
-    }
+    } else if (faRotate) strlcpy(addonShow, faId, sizeof addonShow);   // not saved: taking turns would wear the flash out
+    faRotate = false;
   }
   const uint32_t now = millis();
   if (faKind == FA_STATIC && now - faPushedAt > 30000) {
@@ -3948,6 +3993,27 @@ static void onlineTask(void *) {
       /* When it was tried, kept apart from when GitHub last answered: a look that fails is tried again in an hour. With only the answer's time to go by, one failed look after a good one was repeated on every pass, each of them dropping the printer link to make room (0.7.11). */
       dailyTriedAt = millis() | 1;
       updCheck();
+    }
+    /* Taking turns: the next kept add-on in the list, from flash. Not while a print has the bar, unless add-ons show then too. */
+    {
+      static uint32_t turnAt = 0;
+      const uint8_t st = stateNow;
+      const bool mayShow = addonWhen == WHEN_ALWAYS || st == ST_IDLE || st == ST_READY || st == ST_FINISHED || st == ST_OFFLINE || st == ST_OFF;
+      if (rotateCount >= 2 && libPart && mayShow && !faReload && millis() - turnAt >= addonEvery * 1000UL) {
+        turnAt = millis();
+        int at = -1;
+        for (int i = 0; i < rotateCount; i++) if (!strcmp(addonRotate[i], libActive)) at = i;
+        for (int n = 1; n <= rotateCount; n++) {
+          const char *id = addonRotate[(at + n + rotateCount) % rotateCount];
+          if (strcmp(id, libActive) && libFind(id) >= 0) {
+            strlcpy(libActive, id, sizeof libActive);
+            faRotate = true;
+            faReload = true;
+            faRetryAt = millis();
+            break;
+          }
+        }
+      }
     }
     if (!faReload || (int32_t)(millis() - faRetryAt) >= 0) faTick();
     vTaskDelay(pdMS_TO_TICKS(faKind == FA_FRAMES ? 20 : 250));

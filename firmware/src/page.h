@@ -58,7 +58,7 @@ button:hover{background:rgba(var(--ink),.17)}button.go{background:var(--text);co
 .tile[data-on]{border-color:color-mix(in srgb,var(--c) 55%,var(--line));background:color-mix(in srgb,var(--c) 12%,rgba(var(--ink),.04))}
 .tile .t{display:flex;align-items:center;gap:8px;font-weight:600;min-width:0}.tile .t span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .tile .d{font-size:12.5px;color:var(--t2);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-.tile .acts{display:flex;gap:6px;margin-top:auto;padding-top:4px}.tile button{height:30px;font-size:12.5px}
+.tile .acts{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:auto;padding-top:4px}.tile .acts .turn{margin-right:auto;font-size:12.5px}.tile button{height:30px;font-size:12.5px}
 .tile .body{display:flex;flex-direction:column;gap:6px;min-width:0}
 /* A lone add-on gets the whole row: in a grid cell of its own it left most of the section empty. Text on the left, buttons on the right. */
 .tiles .tile.wide{grid-column:1/-1;flex-direction:row;align-items:center;gap:18px;padding:16px 18px}
@@ -179,6 +179,7 @@ background:color-mix(in srgb,var(--bg) 88%,transparent);backdrop-filter:blur(14p
   <div class="sub">Show something else on the bar when the printer has nothing to say.</div>
   <div class="tiles" id="adtiles"></div>
   <div class="line"><label for="adwhen">Show it</label><select class="pill" id="adwhen"><option value="idle">while the printer is not busy with a print</option><option value="always">always, even while printing</option></select><button id="adnone" hidden>Show nothing</button></div>
+  <div class="line" id="turnrow" hidden><label for="turnevery">Take turns, each for</label><select class="pill" id="turnevery"><option value="10">10 seconds</option><option value="20">20 seconds</option><option value="30">30 seconds</option><option value="60">1 minute</option><option value="120">2 minutes</option><option value="300">5 minutes</option><option value="900">15 minutes</option></select><span class="sub" id="turnnote"></span></div>
   <div class="msg" id="admsg"></div>
   <div class="panel" id="storepanel">
     <div class="head2" style="margin:0"><h2>Store</h2><span class="sp"><span class="sub" id="storenote" style="align-self:center"></span><button id="adup">Upload a file</button><input id="adfile" type="file" accept=".json,application/json" hidden></span></div>
@@ -343,23 +344,27 @@ const ago=(n)=>n<60?n+' s':n<3600?Math.round(n/60)+' min':n<172800?Math.round(n/
 let last=null;
 function pick(id){busy=Date.now();post('/api/config',{addon:{show:id}}).then(r=>{$('admsg').textContent=r.ok?'':(r.message||'Not saved');});}
 function renderAddons(s){
-  const f=s.addonFile, want=s.config.addon.show, tiles=[];
+  const f=s.addonFile, want=s.config.addon.show, tiles=[], turns=s.config.addon.rotate||[], keptIds=(s.library||[]).map(k=>k.id);
   if(f.from||f.loading||f.error){
     const posted=s.addons.find(a=>a.id===f.id);
     tiles.push({id:f.id,name:f.name||(f.loading?'Loading…':'Add-on file'),desc:f.error||f.description,tag:'',
-      sub:[f.kind!=='none'?f.kind:'',f.kind==='maintenance'&&f.value!==undefined?(+f.value).toFixed(1)+' of '+f.every+' print hours'+(f.due?' · due now':''):f.value!==undefined?'reads '+Math.round(+f.value*10)/10+(f.unit?' '+f.unit:''):'',f.author?'by '+f.author:''].filter(Boolean).join(' · '),live:posted&&posted.fresh,bad:!!f.error,file:true,maint:f.kind==='maintenance'});
+      sub:[f.kind!=='none'?f.kind:'',f.kind==='maintenance'&&f.value!==undefined?(+f.value).toFixed(1)+' of '+f.every+' print hours'+(f.due?' · due now':''):f.value!==undefined?'reads '+Math.round(+f.value*10)/10+(f.unit?' '+f.unit:''):'',f.author?'by '+f.author:''].filter(Boolean).join(' · '),live:posted&&posted.fresh,bad:!!f.error,file:true,maint:f.kind==='maintenance',kept:keptIds.includes(f.id)});
   }
   /* The others kept on the bar: a tap swaps one in, with nothing to download. */
-  for(const k of (s.library||[])){if(k.active||k.id===f.id)continue;tiles.push({id:k.id,name:k.name,desc:'',tag:'saved',sub:'kept on the bar · switches in without downloading',saved:true});}
+  for(const k of (s.library||[])){if(k.active||k.id===f.id)continue;tiles.push({id:k.id,name:k.name,desc:'',tag:'saved',sub:'kept on the bar · switches in without downloading',saved:true,kept:true});}
   for(const a of s.addons){if(f.from&&a.id===f.id)continue;if((s.library||[]).some(k=>k.id===a.id&&!k.active))continue;tiles.push({id:a.id,name:a.name,tag:'program',sub:a.kind+' · '+(a.fresh?'posted '+a.age+' s ago':'stopped posting'),live:a.fresh});}
   /* Picked but nothing is running it: replaced by another add-on file, or a program that stopped. Said plainly, with a way out. */
   if(want&&!tiles.some(t=>t.id===want))tiles.push({id:want,name:want,desc:'Picked, but nothing is running it now: it was replaced, or the program that posted it has stopped. Use it again from the store, or clear it.',tag:'not running',bad:true,missing:true});
   const html=tiles.length?tiles.map(t=>'<div class="tile'+(tiles.length===1?' wide':'')+'"'+(t.id&&t.id===want?' data-on':'')+'><div class="body"><div class="t"><i class="dot"'+(t.live?' data-live':'')+(t.bad?' data-bad':'')+'></i><span>'+esc(t.name)+'</span>'+(t.tag?'<em class="tag">'+t.tag+'</em>':'')+'</div>'
     +(t.desc?'<div class="d">'+esc(t.desc)+'</div>':'')+'<div class="sub">'+esc(t.sub||'')+(s.addonShowing&&s.addonShowing===t.id?' · on the bar now':'')+'</div></div>'
-    +'<div class="acts">'+(t.saved?'<button data-use="'+esc(t.id)+'">Show this</button><button data-forget="'+esc(t.id)+'">Remove</button>':t.missing?'<button data-pick="">Clear</button>':t.id?(t.id===want?'<button class="go" disabled>Picked</button>':'<button data-pick="'+esc(t.id)+'">Show this</button>'):'')+(t.maint?'<button data-maint="1" title="Start counting the print hours again">Done</button>':'')+(t.file?'<button data-remove="'+esc(t.id||'')+'">Remove</button>':'')+'</div></div>').join('')
+    +'<div class="acts">'+(t.kept?'<label class="tog turn" title="Take turns on the bar with the other ticked add-ons"><input type="checkbox" data-turn="'+esc(t.id)+'"'+(turns.includes(t.id)?' checked':'')+'> Take turns</label>':'')+(t.saved?'<button data-use="'+esc(t.id)+'">Show this</button><button data-forget="'+esc(t.id)+'">Remove</button>':t.missing?'<button data-pick="">Clear</button>':t.id?(t.id===want?'<button class="go" disabled>Picked</button>':'<button data-pick="'+esc(t.id)+'">Show this</button>'):'')+(t.maint?'<button data-maint="1" title="Start counting the print hours again">Done</button>':'')+(t.file?'<button data-remove="'+esc(t.id||'')+'">Remove</button>':'')+'</div></div>').join('')
     :'<div class="empty">Nothing yet. Pick one from the store below, or upload a file of your own.</div>';
   if(html!==window.adHtml){window.adHtml=html;$('adtiles').innerHTML=html;}
   $('adnone').hidden=!want;
+  /* Taking turns: shown once two or more are ticked. */
+  const going=turns.filter(id=>keptIds.includes(id));$('turnrow').hidden=keptIds.length<2;
+  if(Date.now()-busy>3000)$('turnevery').value=String(s.config.addon.every||20);
+  $('turnnote').textContent=going.length>=2?'Taking turns: '+going.map(id=>{const k=s.library.find(x=>x.id===id);return k?k.name:id;}).join(' → '):'Tick "Take turns" on two or more add-ons to have the bar move between them';
   if(window.storeIdx&&storeKey(s)!==window.storeFor){last=s;drawStore();}
   const on=tiles.find(t=>t.id&&t.id===want);
   $('adsum').textContent=on?on.name+(s.addonShowing===on.id?' · on the bar now':''):'None picked';
@@ -375,6 +380,10 @@ $('adtiles').onclick=async(e)=>{const b=e.target.closest('button');if(!b)return;
     ask({title:'Remove '+name+'?',sub:'It comes off the bar and frees its slot. You can add it again from the store any time.',ok:'Remove',
       act:async()=>{const r=await post('/api/addonfile',id?{remove:true,id}:{remove:true});if(!r.ok)throw new Error(r.message||'The bar did not remove it');$('admsg').textContent='';}});}};
 $('adnone').onclick=()=>pick('');
+$('adtiles').onchange=(e)=>{const b=e.target;if(!b.dataset||!b.dataset.turn)return;busy=Date.now();
+  const rotate=[...$('adtiles').querySelectorAll('input[data-turn]')].filter(x=>x.checked).map(x=>x.dataset.turn);
+  post('/api/config',{addon:{rotate}}).then(r=>{$('admsg').textContent=r.ok?'':(r.message||'Not saved');});};
+$('turnevery').onchange=()=>{busy=Date.now();post('/api/config',{addon:{every:+$('turnevery').value}}).then(r=>{$('admsg').textContent=r.ok?'':(r.message||'Not saved');});};
 $('backup').onclick=()=>{location.href='/api/otherslot.bin';};
 $('hostsave').onclick=async()=>{busy=Date.now();const r=await post('/api/hostname',{name:$('hostname').value.trim()});$('hosthint').textContent=r.message||(r.ok?'Saved':'Not saved');};
 $('adup').onclick=()=>$('adfile').click();
@@ -394,7 +403,7 @@ function drawStore(){
   const idx=window.storeIdx;if(!idx)return;
   window.storeFor=storeKey(last);
   const kept=(last&&last.library)||[],slots=(last&&last.librarySlots)||0;
-  $('storenote').textContent=idx.addons.length+' from GitHub'+(slots?' · '+kept.length+' of '+slots+' kept on the bar':'');
+  $('storenote').textContent=idx.addons.length+' from GitHub'+(slots?' · '+kept.length+' of '+slots+' kept on the bar':last&&last.librarySlots===0?' · this bar cannot keep add-ons (its log says why)':'');
   /* Search, a category and pages, all in the page: nothing is fetched again. */
   const ORDER=['Printer','Weather','Prices','Reminders'],cats=[...new Set(idx.addons.map(storeCat))].sort((x,y)=>(ORDER.indexOf(x)+1||99)-(ORDER.indexOf(y)+1||99)),q=(window.storeQ||'').trim().toLowerCase();
   if(window.storeCats!==cats.join()){window.storeCats=cats.join();
