@@ -28,7 +28,7 @@ API.
 - 🖨️ **Bambu Lab or Klipper**: follows a Bambu printer over its LAN link, or any Klipper printer through Moonraker.
 - 🏠 **Home Assistant** over MQTT: the bar appears by itself as a light with sensors, ready for automations.
 - 🌡️ **A real cool-down** after a print: the bar drains as the bed cools, then says *Ready*.
-- 🎨 **Every state restyled**: eight states, each with two colours, one of 22 effects, a speed, its own brightness and a time limit.
+- 🎨 **Every state restyled**: nine states, including *preparing* (heating, levelling and calibrating before the first layer), each with two colours, one of 22 effects, a speed, its own brightness and a time limit, and any of them can be switched off.
 - 🧩 **Add-ons and a store**: the loaded filament's colour and how much is left on the spool, AMS dryness, time left, heating up, a maintenance reminder, weather for your town, prices, looks and animations.
 - ⬆️ **Updates from GitHub**, checked against the release's checksums, installed with one click.
 - 📶 **Its own hotspot** when Wi-Fi fails, so you can always reach it.
@@ -135,10 +135,14 @@ On a phone the page is one column, with a tab bar along the bottom:
 - **A real cool-down after a print.** Stock shows a finished print in its own
   green whatever you choose. Here the bar drains as the bed cools and only then
   says *Ready*, with the time and bed temperature you set.
-- **Every state restyled.** Idle, printing, paused, finished, cooling, ready,
-  error and offline each get two colours, an effect, a speed, their own
-  brightness, and a time limit after which the bar moves on (stock offers
-  three colours).
+- **Every state restyled.** Idle, preparing, printing, paused, finished,
+  cooling, ready, error and offline each get two colours, an effect, a speed,
+  their own brightness, and a time limit after which the bar moves on (stock
+  offers three colours). *Preparing* covers what a print does before its first
+  layer: on Bambu printers heating the bed and nozzle, levelling, vibration
+  compensation and nozzle cleaning; on Klipper everything before the first
+  extrusion. Untick a state's **On** and the bar skips it: cooling off goes
+  straight to green when a print ends, preparing off shows the printing look.
 - **Twenty-two effects:** solid, breathe, fill, flash, chase, rainbow,
   gradient, waves, scroll, theatre, scanner, meteor, fire, twinkle, sparkle,
   rain, aurora, heartbeat, strobe, candle, ripple and stack. *Try* shows any
@@ -338,7 +342,7 @@ use it). `GET /api` returns this list.
 | `POST /api/addon` | see below | A program saying what it wants shown |
 | `POST /api/addonfile` | `{"url":"https://…"}`, `{"file":{…}}`, `{"use":"<id>"}`, `{"remove":true,"id":"<id>"}`, `{"maintenanceDone":true}` | An add-on the bar runs itself ([format](addons/store/README.md)). Each one added is kept (up to six; `library` in the status lists them) and `use` switches to a kept one without downloading; `remove` without an id removes the one running; the last starts a maintenance reminder's count again |
 | `GET /api/log` | | A report for a bug report: version, state, settings and recent events, with nothing secret |
-| `POST /api/config` | any subset of the settings | `brightness`, `mode`, `music.sensitivity`, `states.<state>.{colour,colour2,effect,speed,level,limit}`, `cool.{minutes,target}`, `schedule.{…}`, `time.{tz,zone}`, `addon.{show,when}`, `order`, `reversed`, `glow` (false: unlit LEDs fully off); `stripLength` (original Panda Status and Lux), `split` (RGB Controller) |
+| `POST /api/config` | any subset of the settings | `brightness`, `mode`, `music.sensitivity`, `states.<state>.{colour,colour2,effect,speed,level,limit,on}`, `cool.{minutes,target}`, `schedule.{…}`, `time.{tz,zone}`, `addon.{show,when}`, `order`, `reversed`, `glow` (false: unlit LEDs fully off); `stripLength` (original Panda Status and Lux), `split` (RGB Controller) |
 | `POST /api/preview` | `{"state":"cooling","progress":60,"seconds":8}` | Show a look for a few seconds |
 | `POST /api/printer` | `{"ip":"…","serial":"…","code":"…"}` | Pair with a Bambu printer; `{"forget":true}` unpairs. The code is never sent back out |
 | `POST /api/printer` | `{"type":"klipper","host":"…","port":7125,"key":"…"}` | Follow a Klipper printer through Moonraker instead; the key is optional and never sent back |
@@ -350,7 +354,7 @@ use it). `GET /api` returns this list.
 | `POST /api/slot`, `/api/reboot`, `/api/factory` | | Other slot; restart; clear settings |
 | `POST /update` | multipart file | Install a `.bin` into the other slot |
 
-States: `idle`, `printing`, `paused`, `finished`, `cooling`, `ready`, `error`, `off`.
+States: `idle`, `preparing`, `printing`, `paused`, `finished`, `cooling`, `ready`, `error`, `off`.
 
 </details>
 
