@@ -22,6 +22,9 @@ main{max-width:860px;margin:0 auto;padding:22px 16px 60px;display:flex;flex-dire
 background:linear-gradient(160deg,color-mix(in srgb,var(--c) var(--tint),var(--cardA)),var(--cardB) 70%)}
 .head{display:flex;align-items:center;gap:12px}.head b{font-size:16px;font-weight:600}
 .chip{padding:4px 11px;border-radius:999px;font-size:12px;font-weight:600;background:color-mix(in srgb,var(--c) 28%,transparent)}
+.chip.newv{margin-left:6px;height:auto;min-height:0;padding:4px 11px;font-size:12px;border:0;cursor:pointer;color:#0b0f14;background:#22c55e;animation:newv 2.4s ease-in-out infinite}.chip.newv:hover{filter:brightness(1.1)}
+@keyframes newv{0%,100%{box-shadow:0 0 0 0 rgba(34,197,94,.5)}50%{box-shadow:0 0 0 6px rgba(34,197,94,0)}}
+@media (prefers-reduced-motion:reduce){.chip.newv{animation:none}}
 .more{margin-left:auto;font-size:13px;color:var(--t3)}
 .big{font-size:54px;font-weight:250;letter-spacing:-.04em;margin:18px 0 2px;text-transform:capitalize}
 .sub{font-size:13px;color:var(--t3)}
@@ -135,7 +138,7 @@ background:color-mix(in srgb,var(--bg) 88%,transparent);backdrop-filter:blur(14p
 </head><body><main>
 
 <section class="card" id="now">
-  <div class="head"><b>Panda State</b><span class="chip" id="fw">…</span><span class="more"><span id="net"></span><span class="sig" id="sig" title="Wi-Fi signal"><i></i><i></i><i></i><i></i></span></span><button class="thm" id="thm"></button></div>
+  <div class="head"><b>Panda State</b><span class="chip" id="fw">…</span><button class="chip newv" id="newv" hidden title="Go to Firmware to install it"></button><span class="more"><span id="net"></span><span class="sig" id="sig" title="Wi-Fi signal"><i></i><i></i><i></i><i></i></span></span><button class="thm" id="thm"></button></div>
   <div class="kick">On the bar now</div>
   <div class="big" id="state">…</div>
   <div class="sub" id="said"></div>
@@ -536,6 +539,9 @@ $('storelist').onclick=(e)=>{const b=e.target.closest('button');if(b&&b.dataset.
 };
 function renderUpdate(s){
   const u=s.update,v=(t)=>String(t).replace(/^v/,'');
+  /* Up top too, beside the version: a new release is easy to miss folded away under Firmware. */
+  $('newv').hidden=!(u.phase==='available'||u.phase==='downloading');
+  $('newv').textContent=u.phase==='downloading'?'Installing v'+v(u.latest)+' · '+u.percent+'%':'v'+v(u.latest)+' available · update';
   $('updtitle').textContent=u.phase==='downloading'?'Installing '+v(u.latest)+' · '+u.percent+'%':u.phase==='installed'?u.message
     :u.phase==='available'?'Version '+v(u.latest)+' is available':u.phase==='checking'?'Looking on GitHub…'
     :u.phase==='current'?'Up to date · '+s.version:'Version '+s.version;
@@ -574,6 +580,7 @@ $('apsave').onclick=async()=>{busy=Date.now();const body={always:$('apmode').val
 $('apmode').onchange=$('apsave').onclick;
 $('updcheck').onclick=()=>post('/api/update',{check:true});
 /* Firmware questions are asked in the page's own pop-up, in plain words: what happens, and how to undo it. */
+$('newv').onclick=()=>{const f=$('fold-fw');f.open=true;f.scrollIntoView({behavior:'smooth',block:'start'});};
 $('updinstall').onclick=()=>{const ver=$('updinstall').textContent.replace('Install ',''),stock=last&&last.otherSlot.project&&!last.otherSlot.ours;
   ask({title:'Install '+ver+'?',sub:'The bar downloads it from GitHub, checks it, and restarts into it. This takes about a minute.'
     +(stock?' It goes where the stock firmware is kept, so the stock firmware will no longer be on the bar. To keep a copy, press Cancel and use Dump stock firmware first.':' The version running now stays on the bar, to go back to if needed.'),
