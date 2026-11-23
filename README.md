@@ -14,7 +14,7 @@
 
 Open replacement firmware for BIQU's Panda light boards, written for the
 **Panda Status P2**, the 25-LED light bar for Bambu Lab **P2S** and **X2D**
-printers. It does what stock does, then adds a real cool-down, thirty-two
+printers. It does what stock does, then adds a real cool-down, dozens of
 effects, add-ons, Home Assistant, Klipper, updates from GitHub and an open
 API.
 
@@ -26,7 +26,7 @@ API.
 - 🖨️ **Bambu Lab or Klipper**: follows a Bambu printer over its LAN link, or any Klipper printer through Moonraker.
 - 🏠 **Home Assistant** over MQTT: the bar appears by itself as a light with sensors, ready for automations.
 - 🌡️ **A real cool-down** after a print: the bar drains as the bed cools, then says *Ready*.
-- 🎨 **Every state restyled**: nine states, including *preparing* (heating, levelling and calibrating before the first layer), each with two colours, one of 32 effects, a speed, its own brightness and a time limit, and any of them can be switched off.
+- 🎨 **Every state restyled**: nine states, including *preparing* (heating, levelling and calibrating before the first layer), each with two colours, an effect from a growing list, a speed, its own brightness and a time limit, and any of them can be switched off.
 - 🧩 **Add-ons and a store**: the loaded filament's colour and how much is left on the spool, AMS dryness, time left, heating up, a maintenance reminder, weather for your town, storm risk, air quality and prices. Looks and animations are effects on the state cards rather than add-ons, and you can still upload one of your own.
 - ⬆️ **Updates from GitHub**, checked against the release's checksums, installed with one click.
 - 📶 **Its own hotspot** when Wi-Fi fails, so you can always reach it.
@@ -141,7 +141,7 @@ On a phone the page is one column, with a tab bar along the bottom:
   compensation and nozzle cleaning; on Klipper everything before the first
   extrusion. Untick a state's **On** and the bar skips it: cooling off goes
   straight to green when a print ends, preparing off shows the printing look.
-- **Thirty-two effects:** solid, breathe, fill, flash, chase, rainbow,
+- **Dozens of effects, with more in each release:** solid, breathe, fill, flash, chase, rainbow,
   gradient, waves, scroll, theatre, scanner, meteor, fire, twinkle, sparkle,
   rain, aurora, heartbeat, strobe, candle, ripple, stack, fade, plasma, lava,
   juggle, bounce, dissolve, fireworks, lightning, highlight and drip. Each
