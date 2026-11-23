@@ -160,6 +160,7 @@ background:color-mix(in srgb,var(--bg) 88%,transparent);backdrop-filter:blur(14p
   <div class="line">
     <label for="order">Colour order</label><select id="order" style="width:90px"></select>
     <label><input type="checkbox" id="rev"> Run the other way along the bar</label>
+    <label><input type="checkbox" id="glow"> Keep a faint glow on unlit LEDs</label>
   </div>
   <div class="line" id="striprow" hidden><label for="striplen">LEDs on the strip</label><input id="striplen" type="text" inputmode="numeric" style="width:70px"><button id="stripsave">Save</button><span class="sub">The 25-LED picture is stretched over however many there are.</span></div>
   <div class="line" id="splitrow" hidden><label class="tog"><input type="checkbox" id="split"> Split the bar: channel 1 shows its first half, channel 2 its second (otherwise both show all of it)</label></div>
@@ -286,7 +287,7 @@ function build(s){
     card.appendChild(more); $('rows').appendChild(card); paint();
   }
   for(const o of ['GRB','RGB','BRG','BGR','RBG','GBR']){const e=document.createElement('option');e.value=e.textContent=o;$('order').appendChild(e);}
-  $('order').value=s.config.order; $('rev').checked=s.config.reversed; $('bri').value=s.config.brightness;
+  $('order').value=s.config.order; $('rev').checked=s.config.reversed;$('glow').checked=s.config.glow!==false; $('bri').value=s.config.brightness;
   $('prtype').value=s.printer.type||'bambu'; showPrType();
   if(s.printer.type==='klipper'){$('klhost').value=s.printer.ip||'';$('klport').value=s.printer.port||7125;}else{$('prip').value=s.printer.ip||''; $('prsn').value=s.printer.serial||'';}
   const h=s.homeAssistant; haOn=h.on; paintHa(); $('hahost').value=h.host; $('haport').value=h.port; $('hauser').value=h.user; $('haprefix').value=h.prefix; $('hatopic').textContent=h.topic;
@@ -572,6 +573,7 @@ $('unpair').onclick=()=>ask({title:'Unpair from the printer?',sub:'The bar stops
 $('coolsave').onclick=async()=>{const r=await post('/api/config',{cool:{minutes:+$('cmin').value,target:+$('cbed').value}});$('prmsg').textContent=r.ok?'Saved':(r.message||'Not saved');};
 $('order').onchange=()=>post('/api/config',{order:$('order').value});
 $('rev').onchange=()=>post('/api/config',{reversed:$('rev').checked});
+$('glow').onchange=()=>post('/api/config',{glow:$('glow').checked});
 $('bri').oninput=()=>{$('briv').textContent=$('bri').value+'%';};
 $('bri').onchange=()=>{busy=Date.now();post('/api/config',{brightness:+$('bri').value});};
 $('wifi').onclick=async()=>{const r=await post('/api/wifi',{ssid:$('ssid').value,password:$('pass').value});$('wifimsg').textContent=r.message||(r.ok?'Saved':'Not saved');};
