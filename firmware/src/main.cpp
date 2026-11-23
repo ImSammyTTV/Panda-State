@@ -220,7 +220,7 @@ static Preferences prefs;
 
 /* ------------------------------------------------------------- looks -- */
 
-/* The first six are the bar's own. The rest are lamp effects in the spirit of WLED's, redrawn for 25 LEDs. They take two colours: the state's own and a second one. */
+/* The first six are the bar's own. The rest are lamp effects drawn for 25 LEDs. They take two colours: the state's own and a second one. */
 enum Effect : uint8_t {
   FX_SOLID, FX_BREATHE, FX_FILL, FX_FLASH, FX_CHASE, FX_RAINBOW,
   FX_GRADIENT, FX_WAVES, FX_SCROLL, FX_THEATRE, FX_SCANNER, FX_METEOR, FX_FIRE, FX_TWINKLE, FX_SPARKLE, FX_RAIN, FX_AURORA,
@@ -1605,7 +1605,7 @@ static void paintEffect(uint8_t effect, uint32_t colour, uint32_t colour2, uint8
   const float heart = cyc(t * sd * 0.25, 1), strobe = cyc(t * sd * 0.6, 1), ripple = cyc(t * sd * 1.6, TAU), stack = cyc(t * sd * 0.12, 2);
   static float flick[LED_COUNT];
   static float flickAll = 1;
-  /* 0.7.21's, in the spirit of WLED's and Nanoleaf's scenes. */
+  /* 0.7.21's. */
   const float fade = cyc(t * sd * 0.4, TAU), plasma1 = cyc(t * sd * 0.9, TAU), plasma2 = cyc(t * sd * 0.6, TAU), plasmaDrift = cyc(t * 0.03 * sd, 1);
   const float lava1 = cyc(t * sd * 0.15, TAU), lava2 = cyc(t * sd * 0.11, TAU), drip = cyc(t * sd * 0.2, 1);
   float juggle[3], bounce[3];
