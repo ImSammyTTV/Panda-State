@@ -133,6 +133,8 @@ On a phone the page is one column, with a tab bar along the bottom:
 - **A real cool-down after a print.** Stock shows a finished print in its own
   green whatever you choose. Here the bar drains as the bed cools and only then
   says *Ready*, with the time and bed temperature you set.
+  Or have it go back to idle as soon as the printer's door is opened after a
+  print, on printers with a door sensor.
 - **Every state restyled.** Idle, preparing, printing, paused, finished,
   cooling, ready, error and offline each get two colours, an effect, a speed,
   their own brightness, and a time limit after which the bar moves on (stock
@@ -343,7 +345,7 @@ use it). `GET /api` returns this list.
 | `POST /api/addon` | see below | A program saying what it wants shown |
 | `POST /api/addonfile` | `{"url":"https://…"}`, `{"file":{…}}`, `{"use":"<id>"}`, `{"remove":true,"id":"<id>"}`, `{"maintenanceDone":true}` | An add-on the bar runs itself ([format](addons/store/README.md)). Each one added is kept (up to six; `library` in the status lists them) and `use` switches to a kept one without downloading; `remove` without an id removes the one running; the last starts a maintenance reminder's count again |
 | `GET /api/log` | | A report for a bug report: version, state, settings and recent events, with nothing secret |
-| `POST /api/config` | any subset of the settings | `brightness`, `mode`, `music.sensitivity`, `states.<state>.{colour,colour2,effect,speed,level,limit,on}`, `cool.{minutes,target}`, `schedule.{…}`, `time.{tz,zone}`, `addon.{show,when,rotate,every}`, `order`, `reversed`, `glow` (false: unlit LEDs fully off); `stripLength` (original Panda Status and Lux), `split` (RGB Controller) |
+| `POST /api/config` | any subset of the settings | `brightness`, `mode`, `music.sensitivity`, `states.<state>.{colour,colour2,effect,speed,level,limit,on}`, `cool.{minutes,target}`, `schedule.{…}`, `time.{tz,zone}`, `addon.{show,when,rotate,every}`, `order`, `reversed`, `glow` (false: unlit LEDs fully off), `doorEndsFinish` (back to idle when the door is opened after a print); `stripLength` (original Panda Status and Lux), `split` (RGB Controller) |
 | `POST /api/preview` | `{"state":"cooling","progress":60,"seconds":8}` | Show a look for a few seconds |
 | `POST /api/printer` | `{"ip":"…","serial":"…","code":"…"}` | Pair with a Bambu printer; `{"forget":true}` unpairs. The code is never sent back out |
 | `POST /api/printer` | `{"type":"klipper","host":"…","port":7125,"key":"…"}` | Follow a Klipper printer through Moonraker instead; the key is optional and never sent back |

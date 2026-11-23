@@ -208,6 +208,7 @@ background:color-mix(in srgb,var(--bg) 88%,transparent);backdrop-filter:blur(14p
   <div class="line" id="bbrow"><input class="grow" id="prip" type="text" placeholder="Printer address, e.g. 192.168.1.50" autocomplete="off"><input class="grow" id="prsn" type="text" placeholder="Serial number" autocomplete="off"><input class="grow" id="prcode" type="password" placeholder="Access code" autocomplete="off"></div>
   <div class="line"><button class="go" id="pair">Pair</button><button id="unpair">Unpair</button><span class="sub" id="prhelp">On the printer: Settings, then LAN Only or Network, shows the address and the access code.</span></div>
   <div class="line"><label for="cmin">After a print, cooling for</label><input id="cmin" type="text" inputmode="numeric" style="width:64px"><label for="cbed">minutes and until the bed is at</label><input id="cbed" type="text" inputmode="numeric" style="width:64px"><label>&deg;C</label><button id="coolsave">Save</button></div>
+  <div class="line"><label class="tog"><input type="checkbox" id="doorend"> After a print, go back to idle as soon as the printer's door is opened (printers with a door sensor)</label></div>
   <div class="msg" id="prmsg"></div>
 </details>
 
@@ -309,7 +310,7 @@ function build(s){
 
   const p2=(s.board||'p2')==='p2'; $('moderow').hidden=!p2; $('btnhelp').textContent=p2?$('btnhelp').textContent:'Button on the board: hold five seconds for the setup Wi-Fi network.';
   if(s.board==='status'||s.board==='lux'){$('striprow').hidden=false;$('striplen').value=s.config.stripLength;}
-  if(s.board==='rgb'){$('splitrow').hidden=false;$('split').checked=s.config.split;} $('cmin').value=s.config.cool.minutes; $('cbed').value=s.config.cool.target;
+  if(s.board==='rgb'){$('splitrow').hidden=false;$('split').checked=s.config.split;} $('cmin').value=s.config.cool.minutes; $('doorend').checked=!!s.config.doorEndsFinish; $('cbed').value=s.config.cool.target;
   const sc=s.config.schedule; schedOn=sc.enabled; paintSched(); $('schfrom').value=sc.from; $('schto').value=sc.to; $('schlvl').value=sc.level;
   /* The zone list: the saved one first if it is not a listed zone, then the browser's own, then the table. */
   const add=(label,tz,zone,pick)=>{const o=document.createElement('option');o.textContent=label;o.value=tz;o.dataset.zone=zone;$('zone').appendChild(o);if(pick)o.selected=true;};
@@ -652,6 +653,7 @@ $('split').onchange=()=>{busy=Date.now();post('/api/config',{split:$('split').ch
 $('pair').onclick=async()=>{const k=$('prtype').value==='klipper';const r=await post('/api/printer',k?{type:'klipper',host:$('klhost').value,port:+($('klport').value||7125),key:$('klkey').value}:{ip:$('prip').value,serial:$('prsn').value,code:$('prcode').value});if(r.ok)$('klkey').value='';$('prmsg').textContent=r.message||(r.ok?'Saved':'Not saved');if(r.ok)$('prcode').value='';};
 $('unpair').onclick=()=>ask({title:'Unpair from the printer?',sub:'The bar stops following the printer until you pair it again here.',ok:'Unpair',warn:true,
   act:async()=>{const r=await post('/api/printer',{forget:true});if(!r.ok)throw new Error(r.message||'It did not unpair');$('prmsg').textContent=r.message||'';$('prip').value='';$('prsn').value='';$('klhost').value='';}});
+$('doorend').onchange=()=>post('/api/config',{doorEndsFinish:$('doorend').checked}).then(r=>{$('prmsg').textContent=r.ok?'Saved':(r.message||'Not saved');});
 $('coolsave').onclick=async()=>{const r=await post('/api/config',{cool:{minutes:+$('cmin').value,target:+$('cbed').value}});$('prmsg').textContent=r.ok?'Saved':(r.message||'Not saved');};
 $('order').onchange=()=>post('/api/config',{order:$('order').value});
 $('rev').onchange=()=>post('/api/config',{reversed:$('rev').checked});
