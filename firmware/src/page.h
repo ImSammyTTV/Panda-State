@@ -21,6 +21,10 @@ main{max-width:860px;margin:0 auto;padding:22px 16px 60px;display:flex;flex-dire
 .card{position:relative;overflow:hidden;border-radius:28px;padding:22px 24px;border:1px solid color-mix(in srgb,var(--c) 18%,var(--line));
 background:linear-gradient(160deg,color-mix(in srgb,var(--c) var(--tint),var(--cardA)),var(--cardB) 70%)}
 .head{display:flex;align-items:center;gap:12px}.head b{font-size:16px;font-weight:600}
+.storebar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:12px 0}.storebar input{flex:1 1 200px;min-width:0;height:36px;border-radius:999px;padding:0 14px}
+.chips{display:flex;flex-wrap:wrap;gap:6px}.chips button{height:32px;font-size:12.5px}.chips button[aria-pressed="true"],.pager button[aria-current]{background:var(--text);color:var(--bg)}
+.pager{display:flex;justify-content:center;flex-wrap:wrap;gap:6px;margin-top:12px}.pager:empty{display:none}.pager button{min-width:36px;height:32px;padding:0 10px;font-size:12.5px}.pager button:disabled{opacity:.4;cursor:default}
+.store .none{grid-column:1/-1;padding:18px;text-align:center;color:var(--t2);font-size:13px}
 .chip{padding:4px 11px;border-radius:999px;font-size:12px;font-weight:600;background:color-mix(in srgb,var(--c) 28%,transparent)}
 .chip.newv{margin-left:6px;height:auto;min-height:0;padding:4px 11px;font-size:12px;border:0;cursor:pointer;color:#0b0f14;background:#22c55e;animation:newv 2.4s ease-in-out infinite}.chip.newv:hover{filter:brightness(1.1)}
 @keyframes newv{0%,100%{box-shadow:0 0 0 0 rgba(34,197,94,.5)}50%{box-shadow:0 0 0 6px rgba(34,197,94,0)}}
@@ -36,7 +40,7 @@ h2{font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--t3);m
 .acts{display:flex;gap:6px}.rowmore{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:0 0 10px 98px;font-size:13px;color:var(--sub)}.rowmore[hidden]{display:none}
 @media(max-width:560px){.rowmore{padding-left:0}}
 input[type=color]{width:44px;height:32px;padding:0;border:0;border-radius:10px;background:none}
-select,input[type=text],input[type=password],input[type=file]{width:100%;height:34px;border-radius:12px;border:1px solid var(--line);background:rgba(var(--ink),.06);color:var(--text);padding:0 10px;font:inherit;font-size:13.5px}
+select,input[type=text],input[type=search],input[type=password],input[type=file]{width:100%;height:34px;border-radius:12px;border:1px solid var(--line);background:rgba(var(--ink),.06);color:var(--text);padding:0 10px;font:inherit;font-size:13.5px}
 /* The open list of a select is drawn by the browser, not by the rule above: without these it came up as white text on a white list. */
 select,input[type=time]{color-scheme:var(--scheme)}
 input[type=time]{height:34px;border-radius:12px;border:1px solid var(--line);background:rgba(var(--ink),.06);color:var(--text);padding:0 10px;font:inherit;font-size:13.5px}
@@ -178,7 +182,9 @@ background:color-mix(in srgb,var(--bg) 88%,transparent);backdrop-filter:blur(14p
   <div class="msg" id="admsg"></div>
   <div class="panel" id="storepanel">
     <div class="head2" style="margin:0"><h2>Store</h2><span class="sp"><span class="sub" id="storenote" style="align-self:center"></span><button id="adup">Upload a file</button><input id="adfile" type="file" accept=".json,application/json" hidden></span></div>
+    <div class="storebar"><input id="storeq" type="search" placeholder="Search the store" aria-label="Search the store" autocomplete="off" spellcheck="false"><span class="chips" id="storecats" role="group" aria-label="Categories"></span></div>
     <div class="store" id="storelist"></div>
+    <div class="pager" id="storepager"></div>
   </div>
   <details class="byo"><summary>Build your own</summary>
     <div class="sub" style="margin-top:10px">An add-on <b>file</b> is a few lines of JSON the bar runs itself: a look, meters, an animation, or a live meter read from a web address. Upload one here, or add yours to the store's folder on GitHub (<a href="https://github.com/ImSammyTTV/Panda-State/tree/main/addons/store" target="_blank" rel="noopener">format and examples</a>).</div>
@@ -389,7 +395,19 @@ function drawStore(){
   window.storeFor=storeKey(last);
   const kept=(last&&last.library)||[],slots=(last&&last.librarySlots)||0;
   $('storenote').textContent=idx.addons.length+' from GitHub'+(slots?' · '+kept.length+' of '+slots+' kept on the bar':'');
-  $('storelist').innerHTML=idx.addons.map(a=>{const url=STORE+a.file,saved=kept.find(k=>k.url===url),using=last&&(saved?saved.active:last.addonFile.url===url),cols=(a.preview||'').match(/[0-9a-fA-F]{6}/g)||[];
+  /* Search, a category and pages, all in the page: nothing is fetched again. */
+  const ORDER=['Printer','Weather','Prices','Reminders'],cats=[...new Set(idx.addons.map(storeCat))].sort((x,y)=>(ORDER.indexOf(x)+1||99)-(ORDER.indexOf(y)+1||99)),q=(window.storeQ||'').trim().toLowerCase();
+  if(window.storeCats!==cats.join()){window.storeCats=cats.join();
+    $('storecats').innerHTML=['All',...cats].map(c=>'<button data-cat="'+esc(c)+'">'+esc(c)+'</button>').join('');}
+  const cat=window.storeCatOn||'All';[...$('storecats').children].forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.cat===cat)));
+  const shown=idx.addons.filter(a=>(cat==='All'||storeCat(a)===cat)&&(!q||[a.name,a.description,a.kind,storeCat(a),a.author].join(' ').toLowerCase().includes(q)));
+  const per=window.matchMedia('(max-width:560px)').matches?4:9,pages=Math.max(1,Math.ceil(shown.length/per));
+  window.storePage=Math.min(Math.max(1,window.storePage||1),pages);
+  const page=shown.slice((window.storePage-1)*per,window.storePage*per);
+  $('storepager').innerHTML=pages<2?'':'<button data-page="'+(window.storePage-1)+'"'+(window.storePage===1?' disabled':'')+' aria-label="Previous page">‹</button>'
+    +Array.from({length:pages},(_,i)=>'<button data-page="'+(i+1)+'"'+(i+1===window.storePage?' aria-current="page"':'')+'>'+(i+1)+'</button>').join('')
+    +'<button data-page="'+(window.storePage+1)+'"'+(window.storePage===pages?' disabled':'')+' aria-label="Next page">›</button>';
+  $('storelist').innerHTML=!page.length?'<div class="none">Nothing in the store matches'+(q?' "'+esc(q)+'"':'')+(cat!=='All'?' in '+esc(cat):'')+'.</div>':page.map(a=>{const url=STORE+a.file,saved=kept.find(k=>k.url===url),using=last&&(saved?saved.active:last.addonFile.url===url),cols=(a.preview||'').match(/[0-9a-fA-F]{6}/g)||[];
     return '<div class="tile"'+(using?' data-on':'')+'><div class="t"><span>'+esc(a.name)+'</span><em class="tag">'+esc(a.kind)+'</em></div>'
       +(cols.length===25?'<div class="sw" data-f="'+esc(a.file)+'">'+cols.map(c=>'<i style="background:#'+c+'"></i>').join('')+'</div>':'')
       +'<div class="d">'+esc(a.description)+'</div><div class="sub">'+(a.author?'by '+esc(a.author):'')+'</div>'
@@ -530,6 +548,11 @@ const fillIn=(text,fill)=>{for(const [k,v] of Object.entries(fill))text=text.spl
 const pad2=(n)=>String(n).padStart(2,'0'),localStamp=(d)=>d.getFullYear()+'-'+pad2(d.getMonth()+1)+'-'+pad2(d.getDate())+'T'+pad2(d.getHours())+':'+pad2(d.getMinutes());
 /* The same, on a clock in the bar's time zone, which is where the bar reads a countdown's times. That need not be this browser's zone: a bar never told its zone keeps UTC, and its countdowns ended hours out (0.7.11). A zone the browser does not know by name is one of the fixed offsets this page offered, which came from the browser's own clock. */
 const barStamp=(d)=>{try{const p={};new Intl.DateTimeFormat('en-CA',{timeZone:last.config.time.zone,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).formatToParts(d).forEach(x=>{p[x.type]=x.value;});return p.year+'-'+p.month+'-'+p.day+'T'+p.hour+':'+p.minute;}catch(e){return localStamp(d);}};
+/* The store's category: from the index, or worked out from its kind for an index that has none. */
+const storeCat=(a)=>a.category||({printer:'Printer',maintenance:'Reminders',countdown:'Reminders',look:'Looks',animation:'Looks'}[a.kind])||(/weather|rain|uv|wind|storm|air/i.test(a.file)?'Weather':'Prices');
+$('storeq').oninput=()=>{window.storeQ=$('storeq').value;window.storePage=1;drawStore();};
+$('storecats').onclick=(e)=>{const b=e.target.closest('button');if(!b)return;window.storeCatOn=b.dataset.cat;window.storePage=1;drawStore();};
+$('storepager').onclick=(e)=>{const b=e.target.closest('button');if(!b||b.disabled)return;window.storePage=+b.dataset.page;drawStore();$('storepanel').scrollIntoView({behavior:'smooth',block:'start'});};
 $('storelist').onclick=(e)=>{const b=e.target.closest('button');if(b&&b.dataset.use){useKept(b.dataset.use);return;}if(!b||!b.dataset.url)return;
   const url=b.dataset.url,card=b.closest('.tile'),name=card?card.querySelector('.t span').textContent:'Add-on';
   /* A place (weather, air): the town is found with Open-Meteo's free place search, and only its coordinates go to the bar. */
