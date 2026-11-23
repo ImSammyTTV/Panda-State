@@ -53,7 +53,7 @@
 
 /* What the firmware calls itself on its page and in /api/status. Plain and generic, so it says what it is on anyone's network. */
 #define FW_NAME "panda"
-#define FW_VERSION "0.7.23"
+#define FW_VERSION "0.7.24"
 /* Where new releases and the add-on store live. A release must carry a
    panda-<board>-custom-<version>.bin for each board and a SHA256SUMS.txt that lists them. */
 #define UPDATE_REPO "ImSammyTTV/Panda-State"
@@ -3492,83 +3492,102 @@ static const char *faCheck(const String &text) {
  *
  * The settings store is 12 KB shared with stock, far too small for several
  * files. 0.7.18 to 0.7.22 looked for room in the "coredump" partition, which
- * on the P2 turned out to be 4 KB. Since 0.7.23 they are kept in the last
- * 24 KB of an app slot: each slot is 1.94 MB and a Panda State image about
- * 1.4 MB, and an update erases and writes only as far as its image goes. The
- * end of a slot is used only if it is blank or already holds the library,
- * so stock firmware left in a slot is never written over; each slot carries
- * a checksum, so one that is damaged reads as empty rather than broken.
+ * on the P2 turned out to be 4 KB. Since 0.7.24 they are kept in the last
+ * 24 KB of the app slot the bar is NOT running from: each slot is 1.94 MB and
+ * a Panda State image about 1.4 MB, and an update erases and writes only as
+ * far as its image goes. Never in the running slot: the flash driver stops
+ * the chip dead on any write there (0.7.23 did, on the P2, at its first save).
+ * After an update the bar runs from the slot that held the library; at start
+ * whatever is newer there (each sector has a sequence number) is copied over
+ * to the slot now free, and only that copy is written. The end of a slot is
+ * used only if it is blank or already holds the library, so stock firmware
+ * left in a slot is never written over; each sector carries a checksum, so
+ * one that is damaged reads as empty rather than broken. A removed add-on
+ * leaves a marker with its own number, so an older copy cannot bring it back.
  *
  * Each slot is one 4 KB flash sector: a header, the address it came from (if
  * any), then the file.
  */
 static const int LIB_SLOTS = 6;
-static const uint32_t LIB_SECTOR = 4096, LIB_MAGIC = 0x4C415350;   // "PSAL"
-struct LibHead { uint32_t magic, crc; uint16_t len, urlLen; char id[16]; char name[28]; };
+static const uint32_t LIB_SECTOR = 4096;
+static const uint32_t LIB_MAGIC = 0x32415350;      // "PSA2": 0.7.24's layout
+static const uint32_t LIB_MAGIC_OLD = 0x4C415350;  // "PSAL": 0.7.18-0.7.23's, only ever a blank to write over
+struct LibHead { uint32_t magic, crc, seq; uint16_t len, urlLen; char id[16]; char name[28]; };   // len 0: removed
 struct LibEntry { bool used; char id[16]; char name[28]; String url; uint16_t len; };
 static LibEntry lib[LIB_SLOTS];
-static const esp_partition_t *libPart = nullptr;
+static const esp_partition_t *libPart = nullptr;   // the slot written to: never the running one
 static SemaphoreHandle_t libLock;
+static uint32_t libSeq = 0;                        // the highest sequence number seen
 static char libActive[16] = "";   // the slot that runs, by id (kept in the settings as "falib"); empty when none does
 
-static uint32_t libOffset(int slot) { return libPart->size - (uint32_t)(LIB_SLOTS - slot) * LIB_SECTOR; }
+static uint32_t libOffsetIn(const esp_partition_t *part, int slot) { return part->size - (uint32_t)(LIB_SLOTS - slot) * LIB_SECTOR; }
+static uint32_t libOffset(int slot) { return libOffsetIn(libPart, slot); }
 
-/* Whether the end of this app slot can hold the library: every sector blank or already the library's. found: one of them is. */
-static bool libRoomIn(const esp_partition_t *part, bool &found) {
-  found = false;
+static uint32_t libCrc(const LibHead &h, const char *url, const char *text) {
+  uint32_t crc = esp_rom_crc32_le(0, (const uint8_t *)&h.seq, sizeof h.seq);
+  crc = esp_rom_crc32_le(crc, (const uint8_t *)&h.len, sizeof h.len + sizeof h.urlLen + sizeof h.id + sizeof h.name);
+  crc = esp_rom_crc32_le(crc, (const uint8_t *)url, h.urlLen);
+  return esp_rom_crc32_le(crc, (const uint8_t *)text, h.len);
+}
+
+/* Reads one sector into buf (LIB_SECTOR bytes) and says whether it holds a good library sector. */
+static bool libSectorGood(const esp_partition_t *part, int slot, char *buf, LibHead &h) {
+  if (esp_partition_read(part, libOffsetIn(part, slot), buf, LIB_SECTOR) != ESP_OK) return false;
+  memcpy(&h, buf, sizeof h);
+  if (h.magic != LIB_MAGIC || sizeof h + h.urlLen + h.len > LIB_SECTOR) return false;
+  const char *url = buf + sizeof h;
+  return libCrc(h, url, url + h.urlLen) == h.crc;
+}
+
+/* Whether the end of this app slot can hold the library: every sector blank or already the library's. */
+static bool libRoomIn(const esp_partition_t *part, uint32_t *buf) {
   if (!part || part->size < LIB_IMAGE_LIMIT + LIB_SLOTS * LIB_SECTOR) return false;
-  std::unique_ptr<uint32_t[]> buf(new uint32_t[LIB_SECTOR / 4]);
   for (int i = 0; i < LIB_SLOTS; i++) {
-    if (esp_partition_read(part, part->size - (uint32_t)(LIB_SLOTS - i) * LIB_SECTOR, buf.get(), LIB_SECTOR) != ESP_OK) return false;
-    if (buf[0] == LIB_MAGIC) { found = true; continue; }
+    if (esp_partition_read(part, libOffsetIn(part, i), buf, LIB_SECTOR) != ESP_OK) return false;
+    if (buf[0] == LIB_MAGIC || buf[0] == LIB_MAGIC_OLD) continue;
     for (uint32_t w = 0; w < LIB_SECTOR / 4; w++) if (buf[w] != 0xFFFFFFFF) return false;
   }
   return true;
 }
 
-static uint32_t libCrc(const LibHead &h, const char *url, const char *text) {
-  uint32_t crc = esp_rom_crc32_le(0, (const uint8_t *)h.id, sizeof h.id + sizeof h.name);
-  crc = esp_rom_crc32_le(crc, (const uint8_t *)url, h.urlLen);
-  return esp_rom_crc32_le(crc, (const uint8_t *)text, h.len);
-}
-
-/* Reads what each slot holds, once at start. A slot is used only if its checksum is right. */
+/* Reads what each slot holds, once at start, after bringing over anything newer from the running slot. */
 static void libBegin() {
   libLock = xSemaphoreCreateMutex();
-  /* The slot that already holds the library, else the first whose end is blank: app1, then app0. */
-  const esp_partition_t *slots[2] = {
-    esp_partition_find_first(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_1, nullptr),
-    esp_partition_find_first(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_0, nullptr),
-  };
-  const esp_partition_t *blank = nullptr;
-  for (const esp_partition_t *part : slots) {
-    bool found;
-    if (!libRoomIn(part, found)) continue;
-    if (found) { libPart = part; break; }
-    if (!blank) blank = part;
+  std::unique_ptr<char[]> buf(new (std::nothrow) char[LIB_SECTOR]);
+  if (!buf) { logLine("Add-on library: not enough memory to read it at start"); return; }
+  const esp_partition_t *running = esp_ota_get_running_partition();
+  const esp_partition_t *spare = esp_ota_get_next_update_partition(nullptr);
+  if (!spare || spare == running || !libRoomIn(spare, (uint32_t *)buf.get())) {
+    logLine("Add-on library: no blank room at the end of the spare app slot, so add-ons are not kept");
+    return;
   }
-  if (!libPart) libPart = blank;
-  if (!libPart) { logLine("Add-on library: no blank room at the end of either app slot, so add-ons are not kept"); return; }
-  std::unique_ptr<char[]> buf(new char[LIB_SECTOR]);
-  int count = 0;
+  libPart = spare;
+  /* The running slot held the library before the last update (or before going back a version): what is newer there comes across. */
+  const bool runningRoom = running && running->size >= LIB_IMAGE_LIMIT + LIB_SLOTS * LIB_SECTOR;
+  int copied = 0, count = 0;
   for (int i = 0; i < LIB_SLOTS; i++) {
+    LibHead here, there;
+    const bool hereGood = libSectorGood(libPart, i, buf.get(), here);
+    if (hereGood) libSeq = max(libSeq, here.seq);
+    if (runningRoom && libSectorGood(running, i, buf.get(), there) && (!hereGood || there.seq > here.seq)) {
+      const uint32_t at = libOffset(i);
+      if (esp_partition_erase_range(libPart, at, LIB_SECTOR) == ESP_OK && esp_partition_write(libPart, at, buf.get(), LIB_SECTOR) == ESP_OK) copied++;
+      libSeq = max(libSeq, there.seq);
+    }
     lib[i].used = false;
-    if (esp_partition_read(libPart, libOffset(i), buf.get(), LIB_SECTOR) != ESP_OK) continue;
     LibHead h;
-    memcpy(&h, buf.get(), sizeof h);
-    if (h.magic != LIB_MAGIC || sizeof h + h.urlLen + h.len > LIB_SECTOR || !h.len) continue;
-    const char *url = buf.get() + sizeof h, *text = url + h.urlLen;
-    if (libCrc(h, url, text) != h.crc) continue;
+    if (!libSectorGood(libPart, i, buf.get(), h) || !h.len) continue;
     lib[i].used = true;
     memcpy(lib[i].id, h.id, sizeof h.id); lib[i].id[sizeof lib[i].id - 1] = 0;
     memcpy(lib[i].name, h.name, sizeof h.name); lib[i].name[sizeof lib[i].name - 1] = 0;
+    const char *url = buf.get() + sizeof h;
     lib[i].url = "";
     lib[i].url.reserve(h.urlLen);
     for (int c = 0; c < h.urlLen; c++) lib[i].url += url[c];
     lib[i].len = h.len;
     count++;
   }
-  logLine("Add-on library: %d of %d slots in use, at the end of %s", count, LIB_SLOTS, libPart->label);
+  logLine("Add-on library: %d of %d slots in use, at the end of %s%s", count, LIB_SLOTS, libPart->label, copied ? " (brought over after an update)" : "");
 }
 
 static int libFind(const char *id) {
@@ -3576,18 +3595,43 @@ static int libFind(const char *id) {
   return -1;
 }
 
-/* A slot's file, or an empty string. */
-static String libText(int slot) {
+/* A slot's file, or an empty string. noMemory: it is there, but there was no memory to read it into just now. */
+static String libText(int slot, bool *noMemory = nullptr) {
   String text;
+  if (noMemory) *noMemory = false;
   if (!libPart || slot < 0 || slot >= LIB_SLOTS) return text;
   xSemaphoreTake(libLock, portMAX_DELAY);
   if (lib[slot].used) {
     const uint16_t urlLen = lib[slot].url.length(), len = lib[slot].len;
-    std::unique_ptr<char[]> buf(new char[len + 1]);
-    if (esp_partition_read(libPart, libOffset(slot) + sizeof(LibHead) + urlLen, buf.get(), len) == ESP_OK) { buf[len] = 0; text = buf.get(); }
+    /* Never a plain new: on a bar short of memory (a download, the printer's link and Home Assistant at once) it stops the bar dead. */
+    std::unique_ptr<char[]> buf(new (std::nothrow) char[len + 1]);
+    if (!buf) { if (noMemory) *noMemory = true; }
+    else if (esp_partition_read(libPart, libOffset(slot) + sizeof(LibHead) + urlLen, buf.get(), len) == ESP_OK) { buf[len] = 0; text = buf.get(); }
   }
   xSemaphoreGive(libLock);
   return text;
+}
+
+/* Writes a sector from its header and two strings, in pieces, and reads it back in small ones: no 4 KB copies, which a bar short of memory may not have. Call with libLock held. */
+static bool libWrite(int slot, const LibHead &h, const char *url, const char *text) {
+  const uint32_t at = libOffset(slot);
+  const struct { const void *data; size_t len; } parts[3] = {{&h, sizeof h}, {url, h.urlLen}, {text, h.len}};
+  bool ok = esp_partition_erase_range(libPart, at, LIB_SECTOR) == ESP_OK;
+  uint32_t pos = at;
+  for (const auto &part : parts) {
+    if (ok && part.len) ok = esp_partition_write(libPart, pos, part.data, part.len) == ESP_OK;
+    pos += part.len;
+  }
+  pos = at;
+  uint8_t chunk[128];
+  for (const auto &part : parts) {
+    for (size_t done = 0; ok && done < part.len; done += sizeof chunk) {
+      const size_t n = min(sizeof chunk, part.len - done);
+      ok = esp_partition_read(libPart, pos + done, chunk, n) == ESP_OK && !memcmp(chunk, (const uint8_t *)part.data + done, n);
+    }
+    pos += part.len;
+  }
+  return ok;
 }
 
 /* Keeps a checked file: in the slot of the same id if there is one (an add-on added again replaces its old copy), else in an empty one.
@@ -3599,30 +3643,22 @@ static const char *libSave(const String &text, const String &url, char *idOut = 
   filter["id"] = true;
   filter["name"] = true;
   JsonDocument doc;
-  if (deserializeJson(doc, text, DeserializationOption::Filter(filter))) return "The add-on file is not valid JSON";
+  const DeserializationError bad = deserializeJson(doc, text, DeserializationOption::Filter(filter));
+  if (bad == DeserializationError::NoMemory) return "The bar is short of memory just now";
+  if (bad) return "The add-on file is not valid JSON";
   LibHead h = {};
   h.magic = LIB_MAGIC;
   strlcpy(h.id, doc["id"] | "", sizeof h.id);
   strlcpy(h.name, doc["name"] | h.id, sizeof h.name);
   h.len = text.length();
   h.urlLen = url.length();
-  h.crc = libCrc(h, url.c_str(), text.c_str());
   xSemaphoreTake(libLock, portMAX_DELAY);
   int slot = libFind(h.id);
   for (int i = 0; i < LIB_SLOTS && slot < 0; i++) if (!lib[i].used) slot = i;
   if (slot < 0) { xSemaphoreGive(libLock); return "All 6 add-on slots on the bar are full: remove one under Add-ons first"; }
-  std::unique_ptr<char[]> buf(new char[LIB_SECTOR]);
-  memset(buf.get(), 0xFF, LIB_SECTOR);
-  memcpy(buf.get(), &h, sizeof h);
-  memcpy(buf.get() + sizeof h, url.c_str(), h.urlLen);
-  memcpy(buf.get() + sizeof h + h.urlLen, text.c_str(), h.len);
-  const uint32_t at = libOffset(slot);
-  bool ok = esp_partition_erase_range(libPart, at, LIB_SECTOR) == ESP_OK && esp_partition_write(libPart, at, buf.get(), LIB_SECTOR) == ESP_OK;
-  if (ok) {
-    /* Read back: a write that did not take is said now, not found at the next start. */
-    std::unique_ptr<char[]> check(new char[LIB_SECTOR]);
-    ok = esp_partition_read(libPart, at, check.get(), LIB_SECTOR) == ESP_OK && !memcmp(check.get(), buf.get(), LIB_SECTOR);
-  }
+  h.seq = ++libSeq;
+  h.crc = libCrc(h, url.c_str(), text.c_str());
+  const bool ok = libWrite(slot, h, url.c_str(), text.c_str());
   if (ok) {
     lib[slot].used = true;
     strlcpy(lib[slot].id, h.id, sizeof lib[slot].id);
@@ -3637,10 +3673,16 @@ static const char *libSave(const String &text, const String &url, char *idOut = 
   return nullptr;
 }
 
+/* A removed add-on leaves a marker with a newer number than any copy of it, so a copy in the other slot is not brought back after an update. */
 static void libRemove(int slot) {
   if (!libPart || slot < 0 || slot >= LIB_SLOTS) return;
   xSemaphoreTake(libLock, portMAX_DELAY);
-  esp_partition_erase_range(libPart, libOffset(slot), LIB_SECTOR);
+  LibHead h = {};
+  h.magic = LIB_MAGIC;
+  strlcpy(h.id, lib[slot].id, sizeof h.id);
+  h.seq = ++libSeq;
+  h.crc = libCrc(h, "", "");
+  libWrite(slot, h, "", "");
   logLine("Add-on library: %s removed from slot %d", lib[slot].id, slot + 1);
   lib[slot].used = false;
   lib[slot].url = "";
@@ -3759,12 +3801,15 @@ static void faTick() {
     faUrl = url;
     String text;
     if (slot >= 0) {
-      text = libText(slot);
+      bool noMemory;
+      text = libText(slot, &noMemory);
+      if (noMemory) { faReload = true; faError = "Short of memory just now: trying again"; faRetryAt = millis() + 5000; return; }
       if (!text.length()) { faError = "The bar could not read this add-on back from its flash: add it again"; faPick = false; return; }
     } else if (!faUrl.length()) {
       const size_t size = prefs.getBytesLength("fajson");
       if (size && size <= FA_MAX_UPLOAD) {
-        std::unique_ptr<char[]> buf(new char[size + 1]);
+        std::unique_ptr<char[]> buf(new (std::nothrow) char[size + 1]);
+        if (!buf) { faReload = true; faError = "Short of memory just now: trying again"; faRetryAt = millis() + 5000; return; }
         prefs.getBytes("fajson", buf.get(), size);
         buf[size] = 0;
         text = buf.get();
@@ -3776,6 +3821,8 @@ static void faTick() {
     if (slot < 0 && faUrl.length() && faInline.length()) { text = faInline; faInline = ""; }
     else if (slot < 0 && faUrl.length()) {
       Fetch f;
+      /* The printer's link is let go first: two secure connections starting at once, with Home Assistant connecting too, left 164 bytes free on a P2 and stopped it (0.7.22). */
+      f.holdFirst = true;
       const int code = f.begin(faUrl);
       if (code != 200) {
         /* A first failure is retried quietly after a few seconds: a one-off
@@ -3807,7 +3854,8 @@ static void faTick() {
       for (const FaReading &one : faReadings)
         if (one.id[0] && !strcmp(one.id, faId) && millis() - one.at < faEveryMs) { faValue = one.value; faFetchedAt = faTriedAt = one.at; }
     /* One fetched from its address, or kept the old way from before the library (0.7.17 and earlier): into the library now, so it is never fetched again and frees its room in the settings. One too big for a slot, or with every slot taken, carries on the old way. */
-    if (slot < 0) {
+    /* Only with memory to spare: the download that just finished, the printer's link and Home Assistant can leave little (320 bytes free, seen on a P2). Tried again at the next load if not. */
+    if (slot < 0 && ESP.getMaxAllocHeap() > 8192) {
       char id[16];
       if (!libSave(text, faUrl, id)) {
         strlcpy(libActive, id, sizeof libActive);
@@ -4214,13 +4262,20 @@ static void handleAddonFile() {
     if (text.length() > FA_MAX_UPLOAD) return sendResult(false, "The file is over 4,000 characters; host it and use its address instead");
     /* Checked in full before it is kept, so a broken file never replaces a working one. */
     if (const char *bad = faCheck(text)) return sendResult(false, bad);
-    /* Into the library; a write that fails leaves the add-on that was running carrying on. */
+    /* Into the library; a write that fails leaves the add-on that was running carrying on. A bar with no library keeps it the old way, in the settings store, as before 0.7.18. */
     char id[16];
-    if (const char *bad = libSave(text, "", id)) return sendResult(false, bad);
-    strlcpy(libActive, id, sizeof libActive);
-    prefs.putString("falib", libActive);
-    prefs.remove("faurl");
-    prefs.remove("fajson");
+    if (const char *bad = libSave(text, "", id)) {
+      if (libPart) return sendResult(false, bad);
+      if (prefs.putBytes("fajson", text.c_str(), text.length()) != text.length()) return sendResult(false, "The bar has no room left to keep this file; host it and use its address instead");
+      libActive[0] = 0;
+      prefs.remove("falib");
+      prefs.remove("faurl");
+    } else {
+      strlcpy(libActive, id, sizeof libActive);
+      prefs.putString("falib", libActive);
+      prefs.remove("faurl");
+      prefs.remove("fajson");
+    }
   } else {
     return sendResult(false, "Send url, file, use or remove");
   }
