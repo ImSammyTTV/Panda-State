@@ -53,7 +53,7 @@
 
 /* What the firmware calls itself on its page and in /api/status. Plain and generic, so it says what it is on anyone's network. */
 #define FW_NAME "panda"
-#define FW_VERSION "0.7.20"
+#define FW_VERSION "0.7.21"
 /* Where new releases and the add-on store live. A release must carry a
    panda-<board>-custom-<version>.bin for each board and a SHA256SUMS.txt that lists them. */
 #define UPDATE_REPO "ImSammyTTV/Panda-State"
@@ -225,12 +225,14 @@ enum Effect : uint8_t {
   FX_SOLID, FX_BREATHE, FX_FILL, FX_FLASH, FX_CHASE, FX_RAINBOW,
   FX_GRADIENT, FX_WAVES, FX_SCROLL, FX_THEATRE, FX_SCANNER, FX_METEOR, FX_FIRE, FX_TWINKLE, FX_SPARKLE, FX_RAIN, FX_AURORA,
   FX_HEARTBEAT, FX_STROBE, FX_CANDLE, FX_RIPPLE, FX_STACK,   // 0.7.15; added at the end, as settings keep effects by name
+  FX_FADE, FX_PLASMA, FX_LAVA, FX_JUGGLE, FX_BOUNCE, FX_DISSOLVE, FX_FIREWORKS, FX_LIGHTNING, FX_HIGHLIGHT, FX_DRIP,   // 0.7.21
   FX_COUNT
 };
 static const char *FX_NAMES[FX_COUNT] = {
   "solid", "breathe", "fill", "flash", "chase", "rainbow",
   "gradient", "waves", "scroll", "theatre", "scanner", "meteor", "fire", "twinkle", "sparkle", "rain", "aurora",
   "heartbeat", "strobe", "candle", "ripple", "stack",
+  "fade", "plasma", "lava", "juggle", "bounce", "dissolve", "fireworks", "lightning", "highlight", "drip",
 };
 
 /* Preparing (0.7.19) goes last among the looks: settings keep states by name, and "off" has to stay after every look. */
@@ -1603,6 +1605,19 @@ static void paintEffect(uint8_t effect, uint32_t colour, uint32_t colour2, uint8
   const float heart = cyc(t * sd * 0.25, 1), strobe = cyc(t * sd * 0.6, 1), ripple = cyc(t * sd * 1.6, TAU), stack = cyc(t * sd * 0.12, 2);
   static float flick[LED_COUNT];
   static float flickAll = 1;
+  /* 0.7.21's, in the spirit of WLED's and Nanoleaf's scenes. */
+  const float fade = cyc(t * sd * 0.4, TAU), plasma1 = cyc(t * sd * 0.9, TAU), plasma2 = cyc(t * sd * 0.6, TAU), plasmaDrift = cyc(t * 0.03 * sd, 1);
+  const float lava1 = cyc(t * sd * 0.15, TAU), lava2 = cyc(t * sd * 0.11, TAU), drip = cyc(t * sd * 0.2, 1);
+  float juggle[3], bounce[3];
+  for (int n = 0; n < 3; n++) {
+    juggle[n] = (N - 1) * (0.5f + 0.5f * sinf(cyc(t * sd * (0.55 + 0.21 * n) + n * 2.1, TAU)));
+    /* A ball's height is |sin|: a bounce off the end of the bar, quickest there and slowest at the top, each ball with its own rhythm. */
+    bounce[n] = (N - 1) * fabsf(sinf(cyc(t * sd * (0.45 + 0.13 * n) + n * 0.9, TAU / 2)));
+  }
+  static float dis[LED_COUNT];
+  static bool disTo[LED_COUNT];
+  static float bolt = 0;
+  static int boltFrom = 0, boltTo = 0;
 
   for (int i = 0; i < N; i++) {
     float *c = fxColour[i];
@@ -1672,6 +1687,59 @@ static void paintEffect(uint8_t effect, uint32_t colour, uint32_t colour2, uint8
         k = 0.35f + 0.65f * on;
         break;
       }
+      case FX_FADE: {
+        /* The whole bar, slowly from one colour to the other and back. */
+        mix(pal[0], pal[1], 0.5f - 0.5f * cosf(fade), c);
+        break;
+      }
+      case FX_PLASMA: {
+        const float x = 0.5f + 0.25f * (sinf(i * 0.4f + plasma1) + sinf(i * 0.23f - plasma2));
+        along(pal, 0.5f * x + plasmaDrift, c);
+        k = 0.55f + 0.45f * x;
+        break;
+      }
+      case FX_LAVA: {
+        /* Slow blobs of the first colour drifting through the second, with soft edges. */
+        const float raw = 0.5f + 0.5f * sinf(i * 0.31f + lava1) * cosf(i * 0.13f - lava2);
+        const float m = constrain((raw - 0.35f) / 0.3f, 0.0f, 1.0f);
+        const float sm = m * m * (3 - 2 * m);
+        mix(pal[1], pal[0], sm, c);
+        k = 0.45f + 0.55f * sm;
+        break;
+      }
+      case FX_JUGGLE: {
+        /* Three dots weaving past one another. */
+        k = 0;
+        for (int n = 0; n < 3; n++) {
+          const float d = (i - juggle[n]) / 1.3f, g = expf(-d * d);
+          if (g > k) { k = g; along(pal, n / 3.0f, c); }
+        }
+        k = sqrtf(k);
+        break;
+      }
+      case FX_BOUNCE: {
+        k = 0;
+        for (int n = 0; n < 3; n++) {
+          const float d = (i - bounce[n]) / 0.8f, g = expf(-d * d);
+          if (g > k) { k = g; along(pal, n / 3.0f, c); }
+        }
+        k = sqrtf(k);
+        break;
+      }
+      case FX_DRIP: {
+        /* A drop gathers at the far end, falls faster and faster, and splashes at the start. */
+        memcpy(c, pal[0], sizeof(float) * 3);
+        k = 0;
+        if (drip < 0.5f) { if (i == N - 1) k = sqrtf(drip * 2); }
+        else {
+          const float f = (drip - 0.5f) * 2, pos = (N - 1) * (1 - f * f);
+          const float behind = i - pos;
+          k = behind < -0.5f ? 0 : behind < 0.5f ? 1 : behind < 3 ? 1 - behind / 3 : 0;
+          if (f > 0.9f && i < 3) { k = max(k, (1 - (f - 0.9f) * 10) * (1 - i / 3.0f)); mix(pal[0], pal[1], 0.5f, c); }
+        }
+        k = sqrtf(constrain(k, 0.0f, 1.0f));
+        break;
+      }
       default: break;   // the effects below are drawn for the whole bar at once
     }
   }
@@ -1715,6 +1783,55 @@ static void paintEffect(uint8_t effect, uint32_t colour, uint32_t colour2, uint8
       if (rnd() < dt * s * 0.8f) glow[i] = 1;
       mix(pal[0], WHITE, glow[i], fxColour[i]);
       fxLevel[i] = 0.55f + 0.45f * glow[i];
+    }
+  } else if (effect == FX_DISSOLVE) {
+    /* LEDs change from one colour to the other one at a time, at random, until the bar has turned over, and back. */
+    for (int i = 0; i < N; i++) {
+      if (rnd() < dt * s * 0.25f) disTo[i] = !disTo[i];
+      dis[i] += ((disTo[i] ? 1.0f : 0.0f) - dis[i]) * min(1.0f, dt * 4);
+      mix(pal[0], pal[1], dis[i], fxColour[i]);
+      fxLevel[i] = 1;
+    }
+  } else if (effect == FX_FIREWORKS) {
+    /* Bursts at random places along the bar, in either colour or between them, spreading a little and fading. */
+    if (rnd() < dt * s * 0.6f) {
+      const int at = (int)(rnd() * N);
+      float col[3];
+      along(pal, rnd(), col);
+      for (int j = -2; j <= 2; j++) {
+        const int i = at + j;
+        if (i < 0 || i >= N) continue;
+        const float v = j == 0 ? 1 : fabsf(j) == 1 ? 0.6f : 0.25f;
+        if (v >= glow[i]) { glow[i] = v; memcpy(tint[i], col, sizeof col); }
+      }
+    }
+    for (int i = 0; i < N; i++) {
+      glow[i] = max(0.0f, glow[i] - dt * 1.4f);
+      mix(tint[i], WHITE, glow[i] > 0.85f ? (glow[i] - 0.85f) * 4 : 0, fxColour[i]);
+      fxLevel[i] = glow[i];
+    }
+  } else if (effect == FX_LIGHTNING) {
+    /* A dim sky in the second colour; now and then a stretch of it lights up, sometimes twice. */
+    if (bolt > 0) bolt = max(0.0f, bolt - dt * 7);
+    else if (rnd() < dt * s * 0.25f) {
+      bolt = 1;
+      boltFrom = (int)(rnd() * N);
+      boltTo = min(N, boltFrom + 4 + (int)(rnd() * 14));
+    } else if (rnd() < dt * 1.2f && boltTo > boltFrom) { bolt = 0.7f; }   // the flicker after
+    if (bolt == 0 && rnd() < dt * 1.5f) boltTo = boltFrom;   // and then it is over
+    for (int i = 0; i < N; i++) {
+      const bool lit = bolt > 0 && i >= boltFrom && i < boltTo;
+      if (lit) mix(pal[0], WHITE, 0.5f, fxColour[i]); else memcpy(fxColour[i], pal[1], sizeof(float) * 3);
+      fxLevel[i] = lit ? bolt : 0.25f;
+    }
+  } else if (effect == FX_HIGHLIGHT) {
+    /* The first colour all along; LEDs here and there rise into the second and settle back. */
+    for (int i = 0; i < N; i++) {
+      if (glow[i] <= 0 && rnd() < dt * s * 0.12f) glow[i] = 2;
+      if (glow[i] > 0) glow[i] = max(0.0f, glow[i] - dt * 0.8f);
+      const float w = glow[i] > 1 ? 2 - glow[i] : glow[i];   // up, then down
+      mix(pal[0], pal[1], w, fxColour[i]);
+      fxLevel[i] = 0.7f + 0.3f * w;
     }
   } else if (effect == FX_RAIN) {
     /* Drops run from the far end of the bar back to the start, each with a short fading tail. */
@@ -2535,7 +2652,7 @@ static const char API_DOC[] PROGMEM = R"JSON({"about":"Panda State, open firmwar
 {"call":"GET /api/status","does":"Everything: what is showing and why, printer link, microphone, clock, add-ons, settings, the 25 LEDs as hex"},
 {"call":"POST /api/state","body":{"state":"idle|printing|paused|finished|cooling|ready|error|off","progress":"0-100"},"does":"A controller saying what the printer is doing. Repeat at least every 45 s; when it stops, the bar's own printer link takes over"},
 {"call":"POST /api/addon","body":{"id":"a-z0-9-_ up to 15","name":"shown on the page","ttl":"seconds this post stays valid, default 120","look":{"colour":"#RRGGBB","colour2":"#RRGGBB","effect":"any effect listed under /api/config","speed":"1-100","progress":"0-100"},"meters":[{"value":"0-100","colour":"#RRGGBB"}],"frame":"25 colours as a list of #RRGGBB or 150 hex digits"},"does":"An add-on saying what it wants shown: send ONE of look, meters (1-4) or frame, and keep posting. Shown only if picked under Add-ons. {id, remove:true} withdraws it"},
-{"call":"POST /api/config","body":{"brightness":"0-100","mode":"status|music","music":{"sensitivity":"low|medium|high|auto"},"states":{"<state>":{"colour":"#RRGGBB","colour2":"#RRGGBB or auto","on":"true|false","effect":"solid|breathe|fill|flash|chase|rainbow|gradient|waves|scroll|theatre|scanner|meteor|fire|twinkle|sparkle|rain|aurora","speed":"1-100"}},"error":{"minutes":"0-1440: how long an error is shown before the idle look returns; 0 until it clears"},"cool":{"minutes":"0-120","target":"20-60"},"schedule":{"enabled":true,"from":"HH:MM","to":"HH:MM","level":"0-100"},"time":{"tz":"POSIX rule","zone":"label"},"addon":{"show":"<id> or empty","when":"idle|always"},"order":"GRB|RGB|...","reversed":false,"glow":"true: unlit LEDs keep a faint glow; false: fully off"},"does":"Change any subset of the settings; saved"},
+{"call":"POST /api/config","body":{"brightness":"0-100","mode":"status|music","music":{"sensitivity":"low|medium|high|auto"},"states":{"<state>":{"colour":"#RRGGBB","colour2":"#RRGGBB or auto","on":"true|false","effect":"one of the effects listed in GET /api/status (effects)","speed":"1-100"}},"error":{"minutes":"0-1440: how long an error is shown before the idle look returns; 0 until it clears"},"cool":{"minutes":"0-120","target":"20-60"},"schedule":{"enabled":true,"from":"HH:MM","to":"HH:MM","level":"0-100"},"time":{"tz":"POSIX rule","zone":"label"},"addon":{"show":"<id> or empty","when":"idle|always"},"order":"GRB|RGB|...","reversed":false,"glow":"true: unlit LEDs keep a faint glow; false: fully off"},"does":"Change any subset of the settings; saved"},
 {"call":"POST /api/preview","body":{"state":"<state>","progress":"0-100","seconds":"1-120"},"does":"Show a state briefly without it counting as the printer's"},
 {"call":"POST /api/printer","body":{"ip":"...","serial":"...","code":"..."},"does":"Pair with a Bambu printer; {forget:true} unpairs"},
 {"call":"POST /api/printer","body":{"type":"klipper","host":"IP or name.local","port":"7125","key":"Moonraker API key, optional"},"does":"Follow a Klipper printer through Moonraker instead (polled every 2 s)"},

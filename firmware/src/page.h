@@ -320,7 +320,8 @@ const ZONES={'UTC':'UTC0','Australia/Melbourne':'AEST-10AEDT,M10.1.0,M4.1.0/3','
 function lookStrip(sw,fx,a,b){const dim='#1a2029',hue=i=>'hsl('+Math.round(i*14.4)+',90%,58%)';
   const at={solid:()=>a,breathe:i=>i%4<2?a:b,fill:i=>i<15?a:dim,flash:()=>a,chase:i=>i%8<2?a:dim,rainbow:hue,gradient:i=>i<12?a:b,waves:i=>i%5<3?a:b,scroll:i=>i%6<3?a:b,
     theatre:i=>i%3===0?a:b,scanner:i=>i>9&&i<15?a:dim,meteor:i=>i<9?(i>5?a:b):dim,fire:i=>['#ffe08a','#ffb347','#ff7a1a','#e53b10','#8a1b08','#3a0b04'][Math.min(5,Math.floor(i/4))],
-    twinkle:i=>i%5===1?a:dim,sparkle:i=>i%4===2?'#ffffff':a,rain:i=>i%6===4?a:dim,aurora:i=>i%6<3?a:b,heartbeat:i=>i<12?a:b,strobe:i=>i%2?a:dim,candle:i=>i%3?a:b,ripple:i=>Math.abs(i-12)%4<2?a:b,stack:i=>i<10?a:b};
+    twinkle:i=>i%5===1?a:dim,sparkle:i=>i%4===2?'#ffffff':a,rain:i=>i%6===4?a:dim,aurora:i=>i%6<3?a:b,heartbeat:i=>i<12?a:b,strobe:i=>i%2?a:dim,candle:i=>i%3?a:b,ripple:i=>Math.abs(i-12)%4<2?a:b,stack:i=>i<10?a:b,fade:()=>a,plasma:i=>i%7<4?a:b,lava:i=>i%9<5?a:b,juggle:i=>i===4||i===13||i===20?a:dim,bounce:i=>i===2||i===9||i===17?a:dim,
+    dissolve:i=>(i*7)%5<2?b:a,fireworks:i=>i>=5&&i<=7||i>=16&&i<=18?(i<10?a:b):dim,lightning:i=>i>=8&&i<15?'#ffffff':b,highlight:i=>i%6===3?b:a,drip:i=>i===24||i===11?a:dim};
   const f=at[fx]||(()=>a);[...sw.children].forEach((el,i)=>{el.style.background=f(i);});}
 const myZone=(()=>{try{return Intl.DateTimeFormat().resolvedOptions().timeZone;}catch(e){return '';}})();
 function fixedZone(){const m=-new Date().getTimezoneOffset(),h=Math.trunc(Math.abs(m)/60),mm=Math.abs(m)%60;const label='UTC'+(m<0?'-':'+')+h+(mm?':'+String(mm).padStart(2,'0'):'');return [label+' (no daylight saving)','<'+(m<0?'-':'+')+String(h).padStart(2,'0')+(mm?String(mm).padStart(2,'0'):'')+'>'+(m<0?'':'-')+h+(mm?':'+String(mm).padStart(2,'0'):'')];}
@@ -408,7 +409,8 @@ let GLOW=true;
 function lookSim(look,fillPct){
   const N=25,c1=hex3(look.colour),c2=look.colour2&&look.colour2!=='auto'?hex3(look.colour2):partner(c1),fx=look.effect||'solid',speed=look.speed||50;
   const pal=[c1,c2],mix=(a,b,k)=>[0,1,2].map(i=>a[i]+(b[i]-a[i])*k),along=(x)=>{const f=(((x%1)+1)%1)*2,i=Math.floor(f);return mix(pal[i%2],pal[(i+1)%2],f-i);};
-  const heat=new Array(N).fill(0),glow=new Array(N).fill(0),tint=[...Array(N)].map(()=>[0,0,0]),flick=new Array(N).fill(0);let drops=[],flickAll=1;
+  const heat=new Array(N).fill(0),glow=new Array(N).fill(0),tint=[...Array(N)].map(()=>[0,0,0]),flick=new Array(N).fill(0),dis=new Array(N).fill(0),disTo=new Array(N).fill(false);let drops=[],flickAll=1,bolt=0,bFrom=0,bTo=0;
+  const W=[255,255,255];
   const cyc=(x,p)=>((x%p)+p)%p;
   return (t,dt)=>{
     const rate=0.1+speed/100*1.9,s=0.5+speed/100*7.5;let lamp=null;
@@ -419,6 +421,13 @@ function lookSim(look,fillPct){
     else if(fx==='sparkle'){lamp=[];for(let i=0;i<N;i++){glow[i]=Math.max(0,glow[i]-dt*6);if(Math.random()<dt*s*0.8)glow[i]=1;lamp.push([mix(c1,[255,255,255],glow[i]),0.55+0.45*glow[i]]);}}
     else if(fx==='rain'){drops=drops.map(d=>d-dt*s*5).filter(d=>d>=-4);if(drops.length<8&&Math.random()<dt*s*0.9)drops.push(N-1);
       const lv=new Array(N).fill(0);for(const d of drops)for(let j=0;j<4;j++){const i=Math.round(d+j);if(i>=0&&i<N)lv[i]=Math.max(lv[i],1-j/4);}lamp=lv.map(l=>[c1,l]);}
+    else if(fx==='dissolve'){lamp=[];for(let i=0;i<N;i++){if(Math.random()<dt*s*0.25)disTo[i]=!disTo[i];dis[i]+=((disTo[i]?1:0)-dis[i])*Math.min(1,dt*4);lamp.push([mix(c1,c2,dis[i]),1]);}}
+    else if(fx==='fireworks'){if(Math.random()<dt*s*0.6){const at=Math.floor(Math.random()*N),col=along(Math.random());for(let j=-2;j<=2;j++){const i=at+j;if(i<0||i>=N)continue;const v=j===0?1:Math.abs(j)===1?0.6:0.25;if(v>=glow[i]){glow[i]=v;tint[i]=col;}}}
+      lamp=[];for(let i=0;i<N;i++){glow[i]=Math.max(0,glow[i]-dt*1.4);lamp.push([mix(tint[i],W,glow[i]>0.85?(glow[i]-0.85)*4:0),glow[i]]);}}
+    else if(fx==='lightning'){if(bolt>0)bolt=Math.max(0,bolt-dt*7);else if(Math.random()<dt*s*0.25){bolt=1;bFrom=Math.floor(Math.random()*N);bTo=Math.min(N,bFrom+4+Math.floor(Math.random()*14));}
+      else if(Math.random()<dt*1.2&&bTo>bFrom)bolt=0.7;if(bolt===0&&Math.random()<dt*1.5)bTo=bFrom;
+      lamp=[];for(let i=0;i<N;i++){const lit=bolt>0&&i>=bFrom&&i<bTo;lamp.push(lit?[mix(c1,W,0.5),bolt]:[c2,0.25]);}}
+    else if(fx==='highlight'){lamp=[];for(let i=0;i<N;i++){if(glow[i]<=0&&Math.random()<dt*s*0.12)glow[i]=2;if(glow[i]>0)glow[i]=Math.max(0,glow[i]-dt*0.8);const w=glow[i]>1?2-glow[i]:glow[i];lamp.push([mix(c1,c2,w),0.7+0.3*w]);}}
     else if(fx==='candle'){flickAll=Math.min(1,Math.max(0.55,flickAll+(Math.random()-0.5)*dt*s*2.2));flickAll+=(0.85-flickAll)*Math.min(1,dt*1.5);lamp=[];
       for(let i=0;i<N;i++){if(flick[i]<=0)flick[i]=0.8;flick[i]=Math.min(1,Math.max(0.5,flick[i]+(Math.random()-0.5)*dt*s*1.6));const v=Math.min(1,flickAll*flick[i]);lamp.push([mix(c2,c1,v),v]);}}
     const out=[];
@@ -431,6 +440,12 @@ function lookSim(look,fillPct){
         case 'heartbeat':{const h=cyc(t*s*0.25,1),beat=(x,at)=>{const d=(x-at)/0.045;return Math.exp(-d*d);},b=Math.max(beat(h,0.08),0.7*beat(h,0.28));col=mix(c2,c1,b);v=Math.sqrt(0.04+0.96*b);break;}
         case 'strobe':{const on=cyc(t*s*0.6,1)<0.12;col=on?c1:c2;v=on?1:0;break;}
         case 'ripple':{const w=0.5+0.5*Math.sin(Math.abs(i-(N-1)/2)*0.9-cyc(t*s*1.6,2*Math.PI));col=mix(c2,c1,w);v=0.3+0.7*w;break;}
+        case 'fade':col=mix(c1,c2,0.5-0.5*Math.cos(cyc(t*s*0.4,2*Math.PI)));break;
+        case 'plasma':{const x=0.5+0.25*(Math.sin(i*0.4+cyc(t*s*0.9,2*Math.PI))+Math.sin(i*0.23-cyc(t*s*0.6,2*Math.PI)));col=along(0.5*x+cyc(t*0.03*s,1));v=0.55+0.45*x;break;}
+        case 'lava':{const raw=0.5+0.5*Math.sin(i*0.31+cyc(t*s*0.15,2*Math.PI))*Math.cos(i*0.13-cyc(t*s*0.11,2*Math.PI)),m=Math.min(1,Math.max(0,(raw-0.35)/0.3)),sm=m*m*(3-2*m);col=mix(c2,c1,sm);v=0.45+0.55*sm;break;}
+        case 'juggle':case 'bounce':{let k=0;for(let n=0;n<3;n++){const p=fx==='juggle'?(N-1)*(0.5+0.5*Math.sin(cyc(t*s*(0.55+0.21*n)+n*2.1,2*Math.PI))):(N-1)*Math.abs(Math.sin(cyc(t*s*(0.45+0.13*n)+n*0.9,Math.PI)));
+          const d=(i-p)/(fx==='juggle'?1.3:0.8),g=Math.exp(-d*d);if(g>k){k=g;col=along(n/3);}}v=Math.sqrt(k);break;}
+        case 'drip':{const dp=cyc(t*s*0.2,1);let k=0;if(dp<0.5){if(i===N-1)k=Math.sqrt(dp*2);}else{const f=(dp-0.5)*2,pos=(N-1)*(1-f*f),b=i-pos;k=b<-0.5?0:b<0.5?1:b<3?1-b/3:0;if(f>0.9&&i<3){k=Math.max(k,(1-(f-0.9)*10)*(1-i/3));col=mix(c1,c2,0.5);}}v=Math.sqrt(Math.min(1,Math.max(0,k)));break;}
         case 'stack':{const st=cyc(t*s*0.12,2),edge=st<1?st*N:(2-st)*N,on=Math.min(1,Math.max(0,edge-i));col=mix(c2,c1,on);v=0.35+0.65*on;break;}
         case 'rainbow':col=hue((i/N+t*rate*0.2)%1);break;
         case 'gradient':col=mix(c1,c2,i/(N-1));break;

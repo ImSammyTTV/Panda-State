@@ -28,7 +28,7 @@ API.
 - 🖨️ **Bambu Lab or Klipper**: follows a Bambu printer over its LAN link, or any Klipper printer through Moonraker.
 - 🏠 **Home Assistant** over MQTT: the bar appears by itself as a light with sensors, ready for automations.
 - 🌡️ **A real cool-down** after a print: the bar drains as the bed cools, then says *Ready*.
-- 🎨 **Every state restyled**: nine states, including *preparing* (heating, levelling and calibrating before the first layer), each with two colours, one of 22 effects, a speed, its own brightness and a time limit, and any of them can be switched off.
+- 🎨 **Every state restyled**: nine states, including *preparing* (heating, levelling and calibrating before the first layer), each with two colours, one of 32 effects, a speed, its own brightness and a time limit, and any of them can be switched off.
 - 🧩 **Add-ons and a store**: the loaded filament's colour and how much is left on the spool, AMS dryness, time left, heating up, a maintenance reminder, weather for your town, prices, looks and animations.
 - ⬆️ **Updates from GitHub**, checked against the release's checksums, installed with one click.
 - 📶 **Its own hotspot** when Wi-Fi fails, so you can always reach it.
@@ -143,9 +143,11 @@ On a phone the page is one column, with a tab bar along the bottom:
   compensation and nozzle cleaning; on Klipper everything before the first
   extrusion. Untick a state's **On** and the bar skips it: cooling off goes
   straight to green when a print ends, preparing off shows the printing look.
-- **Twenty-two effects:** solid, breathe, fill, flash, chase, rainbow,
+- **Thirty-two effects:** solid, breathe, fill, flash, chase, rainbow,
   gradient, waves, scroll, theatre, scanner, meteor, fire, twinkle, sparkle,
-  rain, aurora, heartbeat, strobe, candle, ripple and stack. *Try* shows any
+  rain, aurora, heartbeat, strobe, candle, ripple, stack, fade, plasma, lava,
+  juggle, bounce, dissolve, fireworks, lightning, highlight and drip. Each
+  state card plays its look as the bar would. *Try* shows any
   look on the bar for a few seconds.
 - **Music mode.** A sound-level meter from the built-in microphone, with low,
   medium, high or auto sensitivity.

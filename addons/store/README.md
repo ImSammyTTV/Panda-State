@@ -39,7 +39,8 @@ README's API section).
 
 Effects: solid, breathe, fill, flash, chase, rainbow, gradient, waves, scroll,
 theatre, scanner, meteor, fire, twinkle, sparkle, rain, aurora, and from
-firmware 0.7.15 heartbeat, strobe, candle, ripple and stack.
+firmware 0.7.15 heartbeat, strobe, candle, ripple and stack, and from 0.7.21
+fade, plasma, lava, juggle, bounce, dissolve, fireworks, lightning, highlight and drip.
 
 ### Live meters (`source`)
 
