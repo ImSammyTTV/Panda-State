@@ -18,8 +18,6 @@ printers. It does what stock does, then adds a real cool-down, dozens of
 effects, add-ons, Home Assistant, Klipper, updates from GitHub and an open
 API.
 
-<p align="center"><img src="docs/live-leds.png" alt="The bar's own web page, its live picture of the 25 LEDs running the rainbow effect" width="640"></p>
-
 ## Highlights
 
 - 🔗 **Pairs with the printer by itself**, and keeps stock's Wi-Fi and pairing: nothing to retype.
